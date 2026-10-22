@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
-import { addChild, chooseChild, runDiagnosis, signUp, uniqueEmail } from "./helpers";
+import { expect } from "@playwright/test";
+import { addChild, chooseChild, runDiagnosis, signUp, test, uniqueEmail } from "./helpers";
 
 test("grades 1–2: no diagnosis in grade 1 semester 1, a short one in grade 2, read-aloud on by default", async ({ page }) => {
   await signUp(page, uniqueEmail("g12"));

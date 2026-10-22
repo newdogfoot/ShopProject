@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+import { test } from "./helpers";
 
 /**
  * Whole journey with AI off: guardian signs up with consent → adds a 4th grader →

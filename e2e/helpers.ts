@@ -1,4 +1,17 @@
-import { expect, type Page } from "@playwright/test";
+import { test as base, expect, type Page } from "@playwright/test";
+
+/** Playwright `test` that also fails when the browser logs an error (hydration problems, crashes, failed requests). */
+export const test = base.extend({
+  page: async ({ page }, provide) => {
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
+    page.on("console", (m) => {
+      if (m.type() === "error") errors.push(`console: ${m.text()}`);
+    });
+    await provide(page);
+    expect(errors, "browser errors").toEqual([]);
+  },
+});
 
 export const PASSWORD = "test-password-1234";
 

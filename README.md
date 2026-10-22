@@ -28,6 +28,8 @@ npm run dev
 
 브라우저에서 http://localhost:3000 을 열고 **보호자 가입 → 자녀 추가 → 학습 시작** 순서로 써 보세요. 데이터는 `./.data/pglite`에 저장되고, 처음 실행할 때 테이블이 자동으로 만들어집니다.
 
+> 같은 와이파이의 태블릿·휴대폰으로 개발 서버를 열면(예: `http://192.168.0.10:3000`) Next.js가 개발용 리소스를 막아 화면이 동작하지 않습니다. `next.config.ts`의 `allowedDevOrigins`에 그 주소를 넣거나, `npm run build && npm start`로 실행해서 여세요.
+
 ## 설정 (`.env.local`)
 
 | 변수 | 기본값 | 설명 |
