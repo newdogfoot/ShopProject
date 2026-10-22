@@ -54,6 +54,11 @@ export function ItemPanel({
           <button type="button" data-testid="e2e-wrong" disabled={disabled} onClick={() => onSubmit(item.test!.wrong)}>
             [테스트] 오답 입력
           </button>
+          {item.test.misconception && (
+            <button type="button" data-testid="e2e-misconception" disabled={disabled} onClick={() => onSubmit(item.test!.misconception!)}>
+              [테스트] 오개념 답 입력
+            </button>
+          )}
         </div>
       )}
     </div>

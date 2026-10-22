@@ -16,7 +16,7 @@ export interface ItemView {
   format: "computation" | "word";
   purposeLabel: string;
   /** Only in E2E test mode (E2E_TEST_MODE=1, never in production): keypad inputs that answer right and wrong. */
-  test?: { correct: StudentAnswer; wrong: StudentAnswer };
+  test?: { correct: StudentAnswer; wrong: StudentAnswer; misconception?: StudentAnswer };
 }
 
 export interface FeedbackView {
@@ -72,8 +72,13 @@ export function toItemView(item: Item, purpose: ItemPurpose | "diagnosis"): Item
     speech: markupToSpeech([item.prompt, item.instruction ?? ""].join(" ")),
     format: item.format,
     purposeLabel: PURPOSE_LABEL[purpose],
-    test: process.env.E2E_TEST_MODE === "1" ? { correct: answerToInput(item.answer), wrong: wrongInput(item.answer) } : undefined,
+    test: process.env.E2E_TEST_MODE === "1" ? testInputs(item) : undefined,
   };
+}
+
+function testInputs(item: Item): NonNullable<ItemView["test"]> {
+  const bug = item.bugs.find((b) => b.answer);
+  return { correct: answerToInput(item.answer), wrong: wrongInput(item.answer), misconception: bug?.answer ? answerToInput(bug.answer) : undefined };
 }
 
 const PRAISE = ["정답이에요! 끝까지 생각했네요.", "맞았어요! 실력이 쑥쑥 자라요.", "훌륭해요! 차근차근 잘 풀었어요.", "정답! 방금 방법을 기억해 두세요."];
