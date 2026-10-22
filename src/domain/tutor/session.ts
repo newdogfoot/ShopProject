@@ -86,6 +86,12 @@ export interface Feedback {
 }
 
 const ALL_SKILLS = new Set<string>(SKILL_IDS);
+export const WORD_VARIANTS = 20;
+
+/** Seed of one of the pooled word-problem variants. */
+export function wordSeed(skillId: string, difficulty: number, theme: Theme, pick: number): number {
+  return deriveSeed(0x5eed, "word", skillId, difficulty, theme, pick % WORD_VARIANTS);
+}
 const MAX_TRIES_WITH_HINTS = 3;
 
 export function startSession(opts: { learner: LearnerState; grade: Grade; semester: Semester; theme: Theme; seed: number; now: number; budgetMs?: number }): SessionState {
@@ -206,8 +212,11 @@ export function advance(input: SessionState, learnerIn: LearnerState, now: numbe
         return { state, learner, screen: { type: "worked", skillId: cycle.skillId, example, faded, stepKind: kind } };
       }
       case "item": {
-        const seed = deriveSeed(state.seed, "item", state.counter);
-        const item = step.word ? generateWordItem(cycle.skillId, seed, step.difficulty, state.theme) : generateItem(cycle.skillId, seed, step.difficulty);
+        // Word problems come from a fixed pool of variants per (skill, difficulty, theme)
+        // so AI-written stories can be cached once and reused by every child.
+        const item = step.word
+          ? generateWordItem(cycle.skillId, wordSeed(cycle.skillId, step.difficulty, state.theme, deriveSeed(state.seed, "variant", state.counter)), step.difficulty, state.theme)
+          : generateItem(cycle.skillId, deriveSeed(state.seed, "item", state.counter), step.difficulty);
         const active: ActiveItem = {
           item,
           purpose: step.purpose,
