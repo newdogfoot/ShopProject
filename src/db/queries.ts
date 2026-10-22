@@ -195,16 +195,19 @@ export async function attemptStats(db: Db, studentId: string, since: Date) {
   return rows[0] ?? { count: 0, correct: 0, ms: 0 };
 }
 
-/** Most recent wrong answer for each misconception (examples for guardians). */
+/** Most recent wrong answer for each misconception and skill, keyed "misconceptionId|skillId" (examples for guardians). */
 export async function misconceptionExamples(db: Db, studentId: string) {
   const rows = await db
-    .select({ misconceptionId: attempts.misconceptionId, prompt: attempts.prompt, shown: attempts.shown, createdAt: attempts.createdAt })
+    .select({ misconceptionId: attempts.misconceptionId, skillId: attempts.skillId, prompt: attempts.prompt, shown: attempts.shown, createdAt: attempts.createdAt })
     .from(attempts)
     .where(and(eq(attempts.studentId, studentId), sql`${attempts.misconceptionId} is not null`))
     .orderBy(desc(attempts.createdAt))
     .limit(100);
   const byId = new Map<string, (typeof rows)[number]>();
-  for (const r of rows) if (r.misconceptionId && !byId.has(r.misconceptionId)) byId.set(r.misconceptionId, r);
+  for (const r of rows) {
+    const key = `${r.misconceptionId}|${r.skillId}`;
+    if (r.misconceptionId && !byId.has(key)) byId.set(key, r);
+  }
   return byId;
 }
 

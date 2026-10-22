@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { createChild, deleteChild, updateChild, type ChildFormState } from "./actions";
 import { FieldError, inputClass } from "@/components/ui";
 import { THEMES } from "@/domain/content/stories";
@@ -15,16 +15,23 @@ export interface ChildDefaults {
 }
 
 function Fields({ d }: { d: ChildDefaults }) {
+  // Controlled fields: they keep their values when the server returns a validation error.
+  const [nickname, setNickname] = useState(d.nickname ?? "");
+  const [grade, setGrade] = useState(d.grade ?? 3);
+  const [semester, setSemester] = useState(d.semester ?? 1);
+  const [theme, setTheme] = useState(d.theme ?? "snack");
+  // Read-aloud follows the grade (on for grades 1–2) until the guardian sets it.
+  const [readAloud, setReadAloud] = useState<boolean | null>(d.readAloud ?? null);
   return (
     <>
       <label className="flex flex-col gap-1.5 text-sm font-semibold">
         별명 <span className="font-normal text-muted">실명 대신 아이가 좋아하는 별명을 써 주세요.</span>
-        <input name="nickname" required maxLength={12} defaultValue={d.nickname} placeholder="예: 별이" className={inputClass} />
+        <input name="nickname" required maxLength={12} value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder="예: 별이" className={inputClass} />
       </label>
       <div className="grid grid-cols-2 gap-3">
         <label className="flex flex-col gap-1.5 text-sm font-semibold">
           학년
-          <select name="grade" defaultValue={d.grade ?? 3} className={inputClass}>
+          <select name="grade" value={grade} onChange={(e) => setGrade(Number(e.target.value))} className={inputClass}>
             {[1, 2, 3, 4, 5, 6].map((g) => (
               <option key={g} value={g}>
                 {g}학년
@@ -34,7 +41,7 @@ function Fields({ d }: { d: ChildDefaults }) {
         </label>
         <label className="flex flex-col gap-1.5 text-sm font-semibold">
           학기
-          <select name="semester" defaultValue={d.semester ?? 1} className={inputClass}>
+          <select name="semester" value={semester} onChange={(e) => setSemester(Number(e.target.value))} className={inputClass}>
             <option value={1}>1학기</option>
             <option value={2}>2학기</option>
           </select>
@@ -45,14 +52,20 @@ function Fields({ d }: { d: ChildDefaults }) {
         <div className="flex flex-wrap gap-2">
           {THEMES.map((t) => (
             <label key={t.id} className="flex cursor-pointer items-center gap-1.5 rounded-full bg-white px-3 py-2 font-normal ring-1 ring-brand/20 has-[:checked]:bg-brand has-[:checked]:text-white">
-              <input type="radio" name="theme" value={t.id} defaultChecked={(d.theme ?? "snack") === t.id} className="sr-only" />
+              <input type="radio" name="theme" value={t.id} checked={theme === t.id} onChange={() => setTheme(t.id)} className="sr-only" />
               <span aria-hidden>{t.emoji}</span> {t.name}
             </label>
           ))}
         </div>
       </fieldset>
       <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" name="readAloud" defaultChecked={d.readAloud ?? (d.grade ?? 3) <= 2} className="h-5 w-5 accent-[var(--brand)]" />
+        <input
+          type="checkbox"
+          name="readAloud"
+          checked={readAloud ?? grade <= 2}
+          onChange={(e) => setReadAloud(e.target.checked)}
+          className="h-5 w-5 accent-[var(--brand)]"
+        />
         문제를 소리 내어 읽어 주기 (1~2학년 추천)
       </label>
     </>

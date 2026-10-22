@@ -88,7 +88,7 @@ async function Report({ params }: { params: Promise<{ id: string }> }) {
                 <p className="mt-1">{m.explain}</p>
                 {m.example && (
                   <p className="mt-1 text-muted">
-                    실제 답: <MathText text={m.example.prompt} /> → <b className="text-red-700">{m.example.shown}</b>
+                    실제 답: <MathText text={m.example.prompt} /> → <b className="text-red-700"><MathText text={m.example.shown} /></b>
                   </p>
                 )}
                 <p className="mt-1 text-muted">집에서 도와주기: {m.tip}</p>

@@ -104,7 +104,7 @@ describe("students and learning data", () => {
     });
     const stats = await attemptStats(db, child.id, new Date(Date.now() - 3600_000));
     expect(stats).toEqual({ count: 1, correct: 0, ms: 12_000 });
-    expect((await misconceptionExamples(db, child.id)).get("SUB_SMALLER_FROM_LARGER")?.shown).toBe("26");
+    expect((await misconceptionExamples(db, child.id)).get("SUB_SMALLER_FROM_LARGER|AS_2D_BORROW_SUB")?.shown).toBe("26");
 
     expect(await deleteStudent(db, g.id, child.id)).toBe(true);
     expect(await loadLearner(db, child.id)).toEqual({});

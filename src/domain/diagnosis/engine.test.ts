@@ -143,4 +143,16 @@ describe("adaptive diagnosis (simulation with 1,000 children)", () => {
     expect(result.statusById["GCD_LCM"]).toMatch(/mastered|inferred|shaky/);
     expect(result.rootGaps).toContain("FRAC_EQUIV");
   });
+
+  it("keeps a misconception found by a predicted wrong answer", () => {
+    // A 5th grader who adds tops and bottoms ({1/2}+{1/3}={2/5}) but knows everything before it.
+    const range = diagnosisRange(5, 2);
+    const known = new Set(range);
+    for (const id of ["FRAC_DIFF_DEN_ADD", ...descendantsOf("FRAC_DIFF_DEN_ADD")]) known.delete(id);
+    const s: SimStudent = { grade: 5, semester: 2, range, known, misconception: { FRAC_DIFF_DEN_ADD: "FRAC_ADD_DENOMINATORS" } };
+    const { result } = runDiagnosis(s, 7);
+    expect(result.statusById["FRAC_DIFF_DEN_ADD"]).toBe("misconception");
+    expect(result.learner["FRAC_DIFF_DEN_ADD"].misconceptions["FRAC_ADD_DENOMINATORS"]).toBeGreaterThan(0);
+    expect(result.rootGaps).toContain("FRAC_DIFF_DEN_ADD");
+  });
 });

@@ -242,9 +242,10 @@ export interface DiagnosisResult {
 export function diagnosisResult(state: DiagnosisState): DiagnosisResult {
   // A skill left with one wrong answer (the item budget ran out) is not
   // confirmed: keep it as "probably a gap" so learning starts with a quick check.
+  // A wrong answer that matched a misconception is already confirmed, so it stays.
   const learner: LearnerState = { ...state.learner };
   for (const [id, st] of Object.entries(learner)) {
-    if (st.evidence === "direct" && st.attempts < 2 && st.p < BKT.mastery) {
+    if (st.evidence === "direct" && st.attempts < 2 && st.p < BKT.mastery && !confirmedGap(st)) {
       learner[id] = { ...st, evidence: "inferred", p: 0.3 };
     }
   }

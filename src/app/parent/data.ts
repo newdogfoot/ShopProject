@@ -60,24 +60,26 @@ export interface MisconceptionReport {
 
 export async function misconceptionReport(db: Db, studentId: string, learner: LearnerState): Promise<MisconceptionReport[]> {
   const examples = await misconceptionExamples(db, studentId);
-  const out: MisconceptionReport[] = [];
+  // One entry per misconception, even when it shows up in several skills.
+  const skillsByMisconception = new Map<string, string[]>();
   for (const state of Object.values(learner)) {
     if (deriveStatus(state) !== "misconception") continue;
     for (const [id, n] of Object.entries(state.misconceptions)) {
-      if (n <= 0) continue;
-      const m = getMisconception(id);
-      const ex = examples.get(id);
-      out.push({
-        id,
-        name: m.name,
-        explain: m.parentExplain,
-        tip: m.parentTip,
-        skillName: getSkill(state.skillId).name,
-        example: ex ? { prompt: ex.prompt, shown: ex.shown } : null,
-      });
+      if (n > 0) skillsByMisconception.set(id, [...(skillsByMisconception.get(id) ?? []), state.skillId]);
     }
   }
-  return out;
+  return [...skillsByMisconception].map(([id, skillIds]) => {
+    const m = getMisconception(id);
+    const ex = skillIds.map((sid) => examples.get(`${id}|${sid}`)).find((e) => e !== undefined);
+    return {
+      id,
+      name: m.name,
+      explain: m.parentExplain,
+      tip: m.parentTip,
+      skillName: skillIds.map((sid) => getSkill(sid).name).join(", "),
+      example: ex ? { prompt: ex.prompt, shown: ex.shown } : null,
+    };
+  });
 }
 
 export function stuckReport(learner: LearnerState) {
