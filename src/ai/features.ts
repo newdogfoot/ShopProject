@@ -26,6 +26,8 @@ async function run<T>(deps: AiDeps, req: StructuredRequest<T>): Promise<T | null
   if (!deps.caller) return null;
   const result = await deps.caller.call(req);
   if (result.usage) await deps.store.recordUsage({ ...result.usage, ok: result.data !== null }).catch(() => undefined);
+  // Children just get the template; this line lets an operator notice a broken key or quota.
+  if (result.error && result.error !== "rate_limited") console.warn(`[ai] ${req.feature} fell back to the template: ${result.error}`);
   return result.data;
 }
 
