@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { completeExplain, completeWorked, currentStep, recordCycleAnswer, startCycle, type CycleState } from "./cycle";
 import { buildPlan, learnableSkills } from "./planner";
-import { advance, finishExplain, finishWorked, nextItem, requestHint, startSession, submitAnswer, type SessionState } from "./session";
+import { advance, explanationExample, finishExplain, finishWorked, nextItem, requestHint, startSession, submitAnswer, upcomingExplanations, type SessionState } from "./session";
 import { BKT, deriveStatus, emptySkillState, getState, markMastered, type LearnerState } from "../model/learner";
 import { diagnosisRange, learningRange } from "../curriculum/graph";
 import { answerToInput } from "../items/answer";
@@ -231,5 +231,31 @@ describe("learning session", () => {
     const out = submitAnswer(r.state, learner, doubled, now);
     expect(out.feedback.status).toBe("form");
     expect(out.feedback.done).toBe(false);
+  });
+});
+
+describe("explanation warm-up", () => {
+  it("lists the first explanation of each new skill, starting from a misconception when there is one", () => {
+    const learner: LearnerState = {
+      FRAC_EQUIV: { ...emptySkillState("FRAC_EQUIV"), evidence: "direct", p: 0.1, attempts: 1, misconceptions: { FRAC_EQUIV_ADD_SAME: 1 } },
+    };
+    const list = upcomingExplanations(
+      [
+        { kind: "review", skillId: "AS_2D_CARRY_ADD" },
+        { kind: "learn", skillId: "FRAC_EQUIV" },
+        { kind: "learn", skillId: "DEC_ADD" },
+      ],
+      learner,
+      7,
+    );
+    expect(list.map((x) => [x.skillId, x.strategy, x.misconceptionId])).toEqual([
+      ["FRAC_EQUIV", "misconception", "FRAC_EQUIV_ADD_SAME"],
+      ["DEC_ADD", "concrete", null],
+    ]);
+  });
+
+  it("gives the picture explanation an example with a picture when the skill has one", () => {
+    // Three-digit numbers only come with base-ten blocks at the easiest difficulty.
+    for (let seed = 1; seed <= 20; seed++) expect(explanationExample(seed, "NUM_3DIGIT", 1, "concrete").visual).toBeDefined();
   });
 });

@@ -15,7 +15,7 @@ import {
 } from "@/db/queries";
 import { getCurrentStudent, requireGuardian, selectStudent } from "@/auth/session";
 import { getAiDeps } from "@/ai";
-import { getExplanation, getHint, getWordProblem } from "@/ai/features";
+import { bankedWordProblem, getExplanation, getHint } from "@/ai/features";
 import { templateHint } from "@/domain/content/explanations";
 import { getSkill } from "@/domain/curriculum/skills";
 import { gradeBandOf, type Grade, type Semester } from "@/domain/curriculum/types";
@@ -39,6 +39,7 @@ import {
   type SessionState,
 } from "@/domain/tutor/session";
 import { correctFeedback, solutionFeedback, STEP_LABEL, toItemView, type DiagnosisView, type FeedbackView, type SessionView } from "./views";
+import { warmExplanations, warmWordProblem } from "./warm";
 
 type StudentRow = NonNullable<Awaited<ReturnType<typeof getCurrentStudent>>>;
 
@@ -211,6 +212,7 @@ async function loadSession(student: StudentRow): Promise<SessionCtx> {
       now: Date.now(),
     });
     row = await createSession(db, student.id, "learning", state);
+    warmExplanations(student.id, student.grade as Grade, state.plan, learner, state.seed);
   }
   return { db, student, sessionId: row.id, state: row.state as SessionState, learner };
 }
@@ -260,8 +262,10 @@ async function render(ctx: SessionCtx, state0: SessionState, learner0: LearnerSt
   } else {
     let active = screen.active;
     if (active.item.format === "word" && !active.decorated) {
-      const wp = await getWordProblem(await getAiDeps(student.id), active.item, themeOf(student), grade);
-      active = { ...active, item: wp.item, decorated: true };
+      // Use a checked AI story if one is banked; otherwise show the template now and write one for next time.
+      const banked = await bankedWordProblem(await getAiDeps(student.id), active.item);
+      if (!banked) warmWordProblem(student.id, active.item, themeOf(student), grade);
+      active = { ...active, item: banked ?? active.item, decorated: true };
     }
     if (active.hintsShown > 0 && !active.hints?.[active.hintsShown]) {
       const bug = active.item.bugs.find((b) => b.misconceptionId === active.lastBugId);

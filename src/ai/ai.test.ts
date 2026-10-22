@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getExplanation, getHint, getWordProblem } from "./features";
+import { bankedWordProblem, getExplanation, getHint, getWordProblem } from "./features";
 import { looseAnswerMatches, onlyKnownNumbers, revealsAnswer, sameNumbers, hasBannedContent } from "./validators";
 import type { AiDeps, AiStore, AiUsage, StructuredCaller, StructuredRequest, StructuredResult } from "./types";
 import { generateItem, generateWordItem } from "@/domain/items";
@@ -72,6 +72,16 @@ describe("AI explanations", () => {
     expect(caller.calls).toEqual(["explain"]); // second time came from the cache
   });
 
+  it("shares one AI call between a warm-up and a child asking at the same time", async () => {
+    const caller = fakeCaller({
+      explain: { title: "십 모형을 바꿔요", steps: [{ text: "일의 자리는 뺄 수 없어요." }, { text: "십 모형 1개를 일 모형 10개로 바꿔요." }], summary: "모자라면 10을 받아내려요." },
+    });
+    const { deps: d } = deps(caller);
+    const both = await Promise.all([getExplanation(d, { ...input, strategy: "analogy" }), getExplanation(d, { ...input, strategy: "analogy" })]);
+    expect(both[0]).toEqual(both[1]);
+    expect(caller.calls).toEqual(["explain"]);
+  });
+
   it("rejects explanations with made-up numbers or unsafe text", async () => {
     const bad = fakeCaller({ explain: { title: "설명", steps: [{ text: "4721을 생각해 봐요." }, { text: "끝" }], summary: "정리" } });
     expect((await getExplanation(deps(bad).deps, input)).source).toBe("template");
@@ -131,6 +141,18 @@ describe("AI word problems", () => {
     const again = await getWordProblem(d, word, "animal", 2);
     expect(again.source).toBe("bank");
     expect(right.calls).toEqual(["word-problem", "solve"]);
+  });
+});
+
+describe("banked word problems", () => {
+  it("returns a banked story without calling the AI, or nothing", async () => {
+    const caller = fakeCaller({});
+    const { deps: d, mem } = deps(caller);
+    const item = generateWordItem("AS_2D_CARRY_ADD", 3, 2, "space");
+    expect(await bankedWordProblem(d, item)).toBeNull();
+    mem.bank.set(item.id, "우주선이 별을 모았어요. 몇 개일까요?");
+    expect((await bankedWordProblem(d, item))?.prompt).toBe("우주선이 별을 모았어요. 몇 개일까요?");
+    expect(caller.calls).toEqual([]);
   });
 });
 

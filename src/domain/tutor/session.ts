@@ -123,6 +123,32 @@ function cycleModeFor(kind: PlanStepKind): CycleState["mode"] {
   return kind;
 }
 
+/** The example an explanation is built around. The picture explanation prefers an example that has a picture. */
+export function explanationExample(seed: number, skillId: string, cycle: number, strategy: Strategy): Item {
+  const exampleSeed = deriveSeed(seed, "example", skillId, cycle);
+  const example = generateItem(skillId, exampleSeed, 2);
+  if (strategy === "concrete" && !example.visual) {
+    // Easier items usually come with a picture.
+    const easier = generateItem(skillId, exampleSeed, 1);
+    if (easier.visual) return easier;
+  }
+  return example;
+}
+
+/**
+ * The first explanation each new skill in a plan will need, so the app can have
+ * the AI write them ahead of time (explanations are cached per skill and strategy).
+ */
+export function upcomingExplanations(plan: PlanStep[], learner: LearnerState, seed: number): Array<{ skillId: string; strategy: Strategy; misconceptionId: string | null; example: Item }> {
+  return plan
+    .filter((step) => step.kind === "learn")
+    .map((step) => {
+      const misconceptionId = activeMisconception(learner, step.skillId);
+      const strategy: Strategy = misconceptionId ? "misconception" : "concrete";
+      return { skillId: step.skillId, strategy, misconceptionId, example: explanationExample(seed, step.skillId, 1, strategy) };
+    });
+}
+
 function activeMisconception(learner: LearnerState, skillId: string): string | null {
   const entries = Object.entries(getState(learner, skillId).misconceptions).filter(([, n]) => n > 0);
   if (entries.length === 0) return null;
@@ -209,13 +235,7 @@ export function advance(input: SessionState, learnerIn: LearnerState, now: numbe
         continue;
       }
       case "explain": {
-        const exampleSeed = deriveSeed(state.seed, "example", cycle.skillId, step.cycle);
-        let example = generateItem(cycle.skillId, exampleSeed, 2);
-        if (step.strategy === "concrete" && !example.visual) {
-          // The picture explanation needs a picture; easier items usually come with one.
-          const easier = generateItem(cycle.skillId, exampleSeed, 1);
-          if (easier.visual) example = easier;
-        }
+        const example = explanationExample(state.seed, cycle.skillId, step.cycle, step.strategy);
         return { state, learner, screen: { type: "explain", skillId: cycle.skillId, strategy: step.strategy, misconceptionId: step.misconceptionId, example, cycle: step.cycle, stepKind: kind } };
       }
       case "worked": {

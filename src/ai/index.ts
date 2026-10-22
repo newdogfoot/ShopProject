@@ -3,7 +3,7 @@ import "server-only";
 import { getDb } from "@/db/client";
 import { bankPrompt, findBankedPrompt, getAiCache, recordAiUsage, setAiCache } from "@/db/queries";
 import { createAnthropicCaller, DEFAULT_MODEL } from "./anthropic";
-import type { AiDeps, AiStore, StructuredCaller } from "./types";
+import type { AiDeps, AiStore, StructuredCaller, StructuredRequest, StructuredResult } from "./types";
 
 export function aiEnabled(): boolean {
   return process.env.AI_ENABLED !== "false" && Boolean(process.env.ANTHROPIC_API_KEY);
@@ -47,5 +47,16 @@ export async function getAiDeps(studentId: string): Promise<AiDeps> {
     bank: (row) => bankPrompt(db, row),
   };
   const c = caller();
-  return { caller: c && allowAiCall(studentId) ? c : null, store };
+  return { caller: c ? limitedFor(c, studentId) : null, store };
+}
+
+/** Counts every real call against the child's limit; over the limit, features fall back to templates. */
+function limitedFor(c: StructuredCaller, studentId: string): StructuredCaller {
+  return {
+    model: c.model,
+    call<T>(req: StructuredRequest<T>): Promise<StructuredResult<T>> {
+      if (!allowAiCall(studentId)) return Promise.resolve({ data: null, usage: null, error: "rate_limited" });
+      return c.call(req);
+    },
+  };
 }

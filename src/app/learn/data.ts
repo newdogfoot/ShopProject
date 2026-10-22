@@ -5,6 +5,7 @@ import { activeSession, loadLearner } from "@/db/queries";
 import type { Grade, Semester } from "@/domain/curriculum/types";
 import { deriveStatus, getState } from "@/domain/model/learner";
 import { buildPlan } from "@/domain/tutor/planner";
+import { warmExplanations } from "./warm";
 
 export async function homeData(student: { id: string; grade: number; semester: number; diagnosedAt: Date | null }) {
   const db = await getDb();
@@ -15,9 +16,12 @@ export async function homeData(student: { id: string; grade: number; semester: n
   ]);
   const grade = student.grade as Grade;
   const semester = student.semester as Semester;
+  const plan = student.diagnosedAt ? buildPlan(learner, { grade, semester, now: Date.now() }) : [];
+  // Head start: explanations are cached per skill and strategy, so the example seed does not matter here.
+  if (!learning) warmExplanations(student.id, grade, plan, learner, 1);
   return {
     stars: Object.keys(learner).filter((id) => deriveStatus(getState(learner, id)) === "mastered").length,
-    plan: student.diagnosedAt ? buildPlan(learner, { grade, semester, now: Date.now() }) : [],
+    plan,
     diagnosisInProgress: diagnosis !== null,
     learningInProgress: learning !== null,
   };

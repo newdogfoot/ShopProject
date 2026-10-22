@@ -31,12 +31,24 @@ async function run<T>(deps: AiDeps, req: StructuredRequest<T>): Promise<T | null
 
 // ── Explanations ───────────────────────────────────────────
 
+/** Explanations being written right now, so a warm-up and a child waiting for the same one share a call. */
+const inflight = new Map<string, Promise<Explanation>>();
+
 export async function getExplanation(deps: AiDeps, input: ExplanationInput): Promise<Explanation> {
   const template = templateExplanation(input);
   if (!deps.caller) return template;
   const key = cacheKey({ v: PROMPT_VERSION, f: "explain", m: deps.caller.model, s: input.skillId, st: input.strategy, mc: input.misconceptionId, b: input.gradeBand });
   const cached = await deps.store.getCache<Explanation>(key);
   if (cached) return cached;
+  const pending = inflight.get(key);
+  if (pending) return pending;
+  const work = writeExplanation(deps, input, template, key).finally(() => inflight.delete(key));
+  inflight.set(key, work);
+  return work;
+}
+
+async function writeExplanation(deps: AiDeps, input: ExplanationInput, template: Explanation, key: string): Promise<Explanation> {
+  if (!deps.caller) return template;
 
   const skill = getSkill(input.skillId);
   const content = SKILL_CONTENT[input.skillId as SkillId];
@@ -56,7 +68,7 @@ export async function getExplanation(deps: AiDeps, input: ExplanationInput): Pro
     .filter(Boolean)
     .join("\n\n");
 
-  const out = await run(deps, { feature: "explain", system: SYSTEM_PROMPT, user, schema: ExplanationSchema, effort: "medium", maxTokens: 6000, timeoutMs: 30_000 });
+  const out = await run(deps, { feature: "explain", system: SYSTEM_PROMPT, user, schema: ExplanationSchema, effort: "medium", maxTokens: 6000, timeoutMs: 20_000 });
   if (!out) return template;
   const allText = [out.title, out.summary, ...out.steps.map((s) => s.text)].join("\n");
   const sources = [exampleText, content.keyIdea, ...template.steps.map((s) => s.text), misconception?.childExplain ?? "", skill.goal];
@@ -94,7 +106,7 @@ export async function getHint(deps: AiDeps, input: HintInput): Promise<{ text: s
   ]
     .filter(Boolean)
     .join("\n\n");
-  const out = await run(deps, { feature: "hint", system: SYSTEM_PROMPT, user, schema: HintSchema, effort: "low", maxTokens: 2000, timeoutMs: 15_000 });
+  const out = await run(deps, { feature: "hint", system: SYSTEM_PROMPT, user, schema: HintSchema, effort: "low", maxTokens: 2000, timeoutMs: 8_000 });
   if (!out) return fallback;
   const sources = [input.item.prompt, ...input.item.steps.slice(0, 1), input.studentAnswer];
   if (hasBannedContent(out.hint) || revealsAnswer(out.hint, correct, input.item.prompt) || !onlyKnownNumbers(out.hint, sources)) return fallback;
@@ -103,6 +115,17 @@ export async function getHint(deps: AiDeps, input: HintInput): Promise<{ text: s
 
 // ── Word problems ─────────────────────────────────────────
 
+/** A banked (already checked) AI story for this word problem, if there is one. Never calls the AI. */
+export async function bankedWordProblem(deps: AiDeps, item: Item): Promise<Item | null> {
+  if (item.format !== "word") return null;
+  const banked = await deps.store.findBanked(item.id).catch(() => null);
+  return banked ? { ...item, prompt: banked } : null;
+}
+
+/**
+ * Writes, checks and banks an AI story for this word problem (or reuses a banked one).
+ * Slow (two AI calls), so the app runs it in the background and shows the template meanwhile.
+ */
 export async function getWordProblem(deps: AiDeps, item: Item, theme: Theme, grade: Grade): Promise<{ item: Item; source: "template" | "ai" | "bank" }> {
   if (item.format !== "word") return { item, source: "template" };
   const banked = await deps.store.findBanked(item.id).catch(() => null);
