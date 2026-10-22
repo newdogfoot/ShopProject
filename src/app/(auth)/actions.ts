@@ -6,6 +6,7 @@ import { getDb } from "@/db/client";
 import { createGuardian, findGuardianByEmail, REQUIRED_CONSENTS } from "@/db/queries";
 import { hashPassword, verifyPassword } from "@/auth/password";
 import { logout, startLogin } from "@/auth/session";
+import { clearFailures, isLockedOut, LOCKED_OUT_MESSAGE, recordFailure } from "@/auth/attempts";
 
 export type FormState = { error?: string; fields?: Record<string, string> } | undefined;
 
@@ -43,10 +44,16 @@ export async function login(_prev: FormState, formData: FormData): Promise<FormS
   const password = String(formData.get("password") ?? "");
   const fields = { email };
   if (!email || !password) return { error: "이메일과 비밀번호를 입력해 주세요.", fields };
+  const attemptKey = `login:${email.toLowerCase()}`;
+  if (isLockedOut(attemptKey)) return { error: LOCKED_OUT_MESSAGE, fields };
   const db = await getDb();
   const guardian = await findGuardianByEmail(db, email);
   const ok = guardian ? await verifyPassword(password, guardian.passwordHash) : await verifyPassword(password, "scrypt$16384$8$1$AAAA$AAAA");
-  if (!guardian || !ok) return { error: "이메일 또는 비밀번호가 맞지 않아요.", fields };
+  if (!guardian || !ok) {
+    recordFailure(attemptKey);
+    return { error: "이메일 또는 비밀번호가 맞지 않아요.", fields };
+  }
+  clearFailures(attemptKey);
   await startLogin(guardian.id);
   redirect(safeNext(formData.get("next")));
 }

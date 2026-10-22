@@ -10,6 +10,7 @@ import { verifyPassword } from "@/auth/password";
 import { THEMES } from "@/domain/content/stories";
 import type { Grade, Semester } from "@/domain/curriculum/types";
 import type { Theme } from "@/domain/content/stories";
+import { clearFailures, isLockedOut, LOCKED_OUT_MESSAGE, recordFailure } from "@/auth/attempts";
 
 export type ChildFormState = { error?: string; ok?: boolean } | undefined;
 
@@ -72,10 +73,16 @@ export async function updateChild(_prev: ChildFormState, formData: FormData): Pr
 
 export async function deleteChild(_prev: ChildFormState, formData: FormData): Promise<ChildFormState> {
   const guardian = await requireGuardian();
+  const attemptKey = `delete:${guardian.id}`;
+  if (isLockedOut(attemptKey)) return { error: LOCKED_OUT_MESSAGE };
   const db = await getDb();
   const full = await findGuardianByEmail(db, guardian.email);
   const password = String(formData.get("password") ?? "");
-  if (!full || !(await verifyPassword(password, full.passwordHash))) return { error: "비밀번호가 맞지 않아요." };
+  if (!full || !(await verifyPassword(password, full.passwordHash))) {
+    recordFailure(attemptKey);
+    return { error: "비밀번호가 맞지 않아요." };
+  }
+  clearFailures(attemptKey);
   const ok = await deleteStudent(db, guardian.id, String(formData.get("id") ?? ""));
   if (!ok) return { error: "자녀 정보를 찾을 수 없어요." };
   redirect("/parent");
