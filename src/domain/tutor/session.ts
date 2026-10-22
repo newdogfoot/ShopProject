@@ -35,8 +35,14 @@ export interface ActiveItem {
   formRetry: boolean;
   firstCorrect: boolean | null;
   lastBugId: string | null;
+  /** The child's last wrong answer as shown on screen (markup). */
+  lastShown: string | null;
   startedAt: number;
   done: boolean;
+  /** Set by the app once the prompt has been decorated (AI word problem) so it is not redone. */
+  decorated?: boolean;
+  /** Hint text per level, filled in by the app (template or AI) so refreshes show the same text. */
+  hints?: Record<number, string>;
 }
 
 export interface SessionStats {
@@ -203,7 +209,13 @@ export function advance(input: SessionState, learnerIn: LearnerState, now: numbe
         continue;
       }
       case "explain": {
-        const example = generateItem(cycle.skillId, deriveSeed(state.seed, "example", cycle.skillId, step.cycle), 2);
+        const exampleSeed = deriveSeed(state.seed, "example", cycle.skillId, step.cycle);
+        let example = generateItem(cycle.skillId, exampleSeed, 2);
+        if (step.strategy === "concrete" && !example.visual) {
+          // The picture explanation needs a picture; easier items usually come with one.
+          const easier = generateItem(cycle.skillId, exampleSeed, 1);
+          if (easier.visual) example = easier;
+        }
         return { state, learner, screen: { type: "explain", skillId: cycle.skillId, strategy: step.strategy, misconceptionId: step.misconceptionId, example, cycle: step.cycle, stepKind: kind } };
       }
       case "worked": {
@@ -228,6 +240,7 @@ export function advance(input: SessionState, learnerIn: LearnerState, now: numbe
           formRetry: false,
           firstCorrect: null,
           lastBugId: null,
+          lastShown: null,
           startedAt: now,
           done: false,
         };
@@ -280,7 +293,12 @@ export function submitAnswer(
   }
   const correct = result.status === "correct";
   let learner = learnerIn;
-  let updated: ActiveItem = { ...active, attempts: active.attempts + 1, lastBugId: result.bug?.misconceptionId ?? active.lastBugId };
+  let updated: ActiveItem = {
+    ...active,
+    attempts: active.attempts + 1,
+    lastBugId: correct ? active.lastBugId : (result.bug?.misconceptionId ?? null),
+    lastShown: correct ? active.lastShown : result.shown,
+  };
   if (active.attempts === 0) {
     const skill = getSkill(active.item.skillId);
     const ms = now - active.startedAt;

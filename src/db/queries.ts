@@ -19,7 +19,7 @@ export const SESSION_DAYS = 30;
 
 export async function findGuardianByEmail(db: Db, email: string) {
   const rows = await db.select().from(guardians).where(eq(guardians.email, email.toLowerCase())).limit(1);
-  return rows[0] ?? null;
+  return rows.at(0) ?? null;
 }
 
 export async function createGuardian(db: Db, email: string, passwordHash: string, consentKinds: readonly string[]) {
@@ -54,7 +54,7 @@ export async function guardianForToken(db: Db, token: string, now = new Date()) 
     .innerJoin(guardians, eq(guardians.id, authSessions.guardianId))
     .where(and(eq(authSessions.tokenHash, hashToken(token)), gt(authSessions.expiresAt, now)))
     .limit(1);
-  return rows[0] ?? null;
+  return rows.at(0) ?? null;
 }
 
 export async function deleteAuthSession(db: Db, token: string) {
@@ -86,7 +86,7 @@ export async function getStudent(db: Db, guardianId: string, studentId: string) 
     .from(students)
     .where(and(eq(students.id, studentId), eq(students.guardianId, guardianId)))
     .limit(1);
-  return rows[0] ?? null;
+  return rows.at(0) ?? null;
 }
 
 export async function updateStudent(db: Db, guardianId: string, studentId: string, input: Partial<StudentInput>) {
@@ -145,7 +145,7 @@ export async function activeSession(db: Db, studentId: string, kind: "diagnosis"
     .where(and(eq(learningSessions.studentId, studentId), eq(learningSessions.kind, kind), eq(learningSessions.status, "active")))
     .orderBy(desc(learningSessions.startedAt))
     .limit(1);
-  return rows[0] ?? null;
+  return rows.at(0) ?? null;
 }
 
 export async function createSession(db: Db, studentId: string, kind: "diagnosis" | "learning", state: unknown) {

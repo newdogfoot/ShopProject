@@ -43,3 +43,12 @@ export function gradeBandOf(grade: Grade): GradeBand {
 export function termIndex(grade: Grade, semester: Semester): number {
   return (grade - 1) * 2 + semester;
 }
+
+/**
+ * Semester for a date in the Korean school year: March–August is the first
+ * semester, September–February the second.
+ */
+export function semesterOf(date: Date): Semester {
+  const month = date.getMonth() + 1;
+  return month >= 3 && month <= 8 ? 1 : 2;
+}

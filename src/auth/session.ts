@@ -6,6 +6,7 @@ import "server-only";
 import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { getDb } from "@/db/client";
 import { createAuthSession, deleteAuthSession, getStudent, guardianForToken } from "@/db/queries";
 
@@ -35,6 +36,8 @@ export async function logout(): Promise<void> {
 
 /** The signed-in guardian, or null. Deduplicated per request. */
 export const getCurrentGuardian = cache(async () => {
+  // Login state is per request: keep it (and the expiry check's clock) out of prerenders and prefetches.
+  await connection();
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token) return null;
   return guardianForToken(await getDb(), token);

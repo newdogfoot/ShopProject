@@ -273,3 +273,21 @@ export function answerToInput(spec: AnswerSpec): StudentAnswer {
       return { kind: "integer-list", text: spec.values.join(", ") };
   }
 }
+
+/** A keypad input that is certainly wrong (used by tests and the E2E helper). */
+export function wrongInput(spec: AnswerSpec): StudentAnswer {
+  switch (spec.kind) {
+    case "integer":
+      return { kind: "integer", text: String(spec.value + 1) };
+    case "decimal":
+      return { kind: "decimal", text: toDecimalString(add(spec.value, rat(1))) ?? "1" };
+    case "fraction":
+      return answerToInput({ ...spec, value: add(spec.value, rat(1)) });
+    case "quotient-remainder":
+      return { kind: "quotient-remainder", quotient: String(spec.quotient + 1), remainder: String(spec.remainder) };
+    case "compare":
+      return { kind: "compare", value: spec.value === "<" ? ">" : "<" };
+    case "integer-list":
+      return { kind: "integer-list", text: spec.values.length > 1 ? spec.values.slice(0, -1).join(", ") : String((spec.values[0] ?? 0) + 1) };
+  }
+}

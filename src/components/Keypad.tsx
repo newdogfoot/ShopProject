@@ -1,0 +1,285 @@
+"use client";
+
+import { useEffect, useEffectEvent, useReducer } from "react";
+import type { AnswerKind, FractionForm, StudentAnswer } from "@/domain/items/types";
+
+type Field = "text" | "whole" | "num" | "den" | "quotient" | "remainder";
+
+interface State {
+  fields: Record<Field, string>;
+  focus: Field;
+  compare: string;
+}
+
+type Action =
+  | { type: "digit"; d: string }
+  | { type: "char"; c: string }
+  | { type: "back" }
+  | { type: "focus"; f: Field }
+  | { type: "next" }
+  | { type: "compare"; v: string };
+
+const MAX_LEN = 13;
+
+function order(kind: AnswerKind, form?: FractionForm): Field[] {
+  if (kind === "fraction") return form === "improper" ? ["num", "den"] : ["whole", "num", "den"];
+  if (kind === "quotient-remainder") return ["quotient", "remainder"];
+  return ["text"];
+}
+
+function initialFocus(kind: AnswerKind, form?: FractionForm): Field {
+  if (kind === "fraction") return form === "mixed" ? "whole" : "num";
+  if (kind === "quotient-remainder") return "quotient";
+  return "text";
+}
+
+function init(args: { kind: AnswerKind; form?: FractionForm }): State {
+  return {
+    fields: { text: "", whole: "", num: "", den: "", quotient: "", remainder: "" },
+    focus: initialFocus(args.kind, args.form),
+    compare: "",
+  };
+}
+
+function makeReducer(kind: AnswerKind, form?: FractionForm) {
+  const fields = order(kind, form);
+  return (s: State, a: Action): State => {
+    switch (a.type) {
+      case "digit": {
+        const cur = s.fields[s.focus];
+        if (cur.length >= MAX_LEN) return s;
+        return { ...s, fields: { ...s.fields, [s.focus]: cur + a.d } };
+      }
+      case "char": {
+        const cur = s.fields[s.focus];
+        if (a.c === "." && (kind !== "decimal" || cur.includes(".") || cur === "")) return s;
+        if (a.c === "," && (kind !== "integer-list" || cur === "" || cur.endsWith(", "))) return s;
+        return { ...s, fields: { ...s.fields, [s.focus]: cur + (a.c === "," ? ", " : a.c) } };
+      }
+      case "back": {
+        const cur = s.fields[s.focus];
+        if (cur === "") {
+          const i = fields.indexOf(s.focus);
+          return i > 0 ? { ...s, focus: fields[i - 1] } : s;
+        }
+        const next = cur.endsWith(", ") ? cur.slice(0, -2) : cur.slice(0, -1);
+        return { ...s, fields: { ...s.fields, [s.focus]: next } };
+      }
+      case "focus":
+        return fields.includes(a.f) ? { ...s, focus: a.f } : s;
+      case "next": {
+        const i = fields.indexOf(s.focus);
+        return { ...s, focus: fields[(i + 1) % fields.length] };
+      }
+      case "compare":
+        return { ...s, compare: a.v };
+    }
+  };
+}
+
+function toAnswer(kind: AnswerKind, s: State): StudentAnswer | null {
+  const f = s.fields;
+  switch (kind) {
+    case "integer":
+      return f.text ? { kind, text: f.text } : null;
+    case "decimal":
+      return f.text && !f.text.endsWith(".") ? { kind, text: f.text } : null;
+    case "fraction":
+      if (!f.num && !f.den && f.whole) return { kind, whole: f.whole, num: "", den: "" };
+      return f.num && f.den ? { kind, whole: f.whole, num: f.num, den: f.den } : null;
+    case "quotient-remainder":
+      return f.quotient ? { kind, quotient: f.quotient, remainder: f.remainder || "0" } : null;
+    case "compare":
+      return s.compare ? { kind, value: s.compare } : null;
+    case "integer-list":
+      return f.text ? { kind, text: f.text } : null;
+  }
+}
+
+function Box({ value, active, label, onClick, wide }: { value: string; active: boolean; label: string; onClick: () => void; wide?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`${label} 칸${value ? `: ${value}` : ", 비어 있음"}`}
+      className={`min-h-14 ${wide ? "min-w-40" : "min-w-16"} rounded-2xl border-4 bg-white px-3 text-center text-3xl font-bold tabular-nums transition ${
+        active ? "border-brand shadow-[0_0_0_4px_rgba(109,74,255,0.15)]" : "border-brand/25"
+      }`}
+    >
+      {value || <span className="text-brand/30">{active ? "|" : " "}</span>}
+    </button>
+  );
+}
+
+export function Keypad({
+  kind,
+  form,
+  disabled,
+  onSubmit,
+  submitLabel = "확인",
+}: {
+  kind: AnswerKind;
+  form?: FractionForm;
+  disabled?: boolean;
+  onSubmit: (answer: StudentAnswer) => void;
+  submitLabel?: string;
+}) {
+  const [state, dispatch] = useReducer(makeReducer(kind, form), { kind, form }, init);
+  const answer = toAnswer(kind, state);
+  const submit = () => {
+    if (answer && !disabled) onSubmit(answer);
+  };
+
+  // Physical keyboard: digits, backspace, enter, "." / "," and "/" (next box).
+  const onKey = useEffectEvent((e: KeyboardEvent) => {
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+    if (/^[0-9]$/.test(e.key)) dispatch({ type: "digit", d: e.key });
+    else if (e.key === "Backspace") dispatch({ type: "back" });
+    else if (e.key === "Enter") {
+      // Stop a focused keypad button from also being pressed.
+      e.preventDefault();
+      submit();
+    } else if (e.key === "." || e.key === ",") dispatch({ type: "char", c: e.key });
+    else if ((e.key === "/" || e.key === "ArrowRight") && (kind === "fraction" || kind === "quotient-remainder")) {
+      e.preventDefault();
+      dispatch({ type: "next" });
+    } else if (kind === "compare" && (e.key === "<" || e.key === ">" || e.key === "=")) dispatch({ type: "compare", v: e.key });
+  });
+
+  useEffect(() => {
+    if (disabled) return;
+    const handler = (e: KeyboardEvent) => onKey(e);
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [disabled]);
+
+  const display = (() => {
+    const f = state.fields;
+    const box = (field: Field, label: string, wide = false) => (
+      <Box value={f[field]} active={state.focus === field} label={label} wide={wide} onClick={() => dispatch({ type: "focus", f: field })} />
+    );
+    switch (kind) {
+      case "fraction":
+        return (
+          <div className="flex items-center justify-center gap-3">
+            {form !== "improper" && (
+              <div className="flex flex-col items-center gap-1">
+                {box("whole", "자연수")}
+                <span className="text-xs text-muted">자연수</span>
+              </div>
+            )}
+            <div className="flex flex-col items-center gap-1">
+              {box("num", "분자")}
+              <span className="h-1 w-20 rounded bg-foreground" aria-hidden />
+              {box("den", "분모")}
+            </div>
+          </div>
+        );
+      case "quotient-remainder":
+        return (
+          <div className="flex items-end justify-center gap-3">
+            <label className="flex flex-col items-center gap-1 text-sm text-muted">
+              {box("quotient", "몫")}몫
+            </label>
+            <span className="pb-6 text-2xl font-bold text-muted">…</span>
+            <label className="flex flex-col items-center gap-1 text-sm text-muted">
+              {box("remainder", "나머지")}나머지
+            </label>
+          </div>
+        );
+      case "compare":
+        return (
+          <div className="flex justify-center gap-3" role="radiogroup" aria-label="크기 비교">
+            {[">", "=", "<"].map((v) => (
+              <button
+                key={v}
+                type="button"
+                role="radio"
+                aria-checked={state.compare === v}
+                disabled={disabled}
+                onClick={() => dispatch({ type: "compare", v })}
+                className={`h-20 w-20 rounded-2xl border-4 text-4xl font-black transition ${
+                  state.compare === v ? "border-brand bg-brand text-white" : "border-brand/30 bg-white text-brand"
+                }`}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+        );
+      default:
+        return <div className="flex justify-center">{box("text", kind === "integer-list" ? "답" : "답", true)}</div>;
+    }
+  })();
+
+  const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
+  const extra = kind === "decimal" ? "." : kind === "integer-list" ? "," : null;
+
+  return (
+    <div className="flex flex-col gap-4">
+      {display}
+      {kind !== "compare" && (
+        <div className="mx-auto grid w-full max-w-xs grid-cols-3 gap-2">
+          {keys.map((k) => (
+            <button
+              key={k}
+              type="button"
+              disabled={disabled}
+              onClick={() => dispatch({ type: "digit", d: k })}
+              className="h-14 rounded-2xl bg-white text-2xl font-bold shadow-sm ring-1 ring-brand/15 active:scale-95 disabled:opacity-40"
+            >
+              {k}
+            </button>
+          ))}
+          {extra ? (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => dispatch({ type: "char", c: extra })}
+              aria-label={extra === "." ? "소수점" : "쉼표"}
+              className="h-14 rounded-2xl bg-white text-2xl font-bold shadow-sm ring-1 ring-brand/15 active:scale-95 disabled:opacity-40"
+            >
+              {extra}
+            </button>
+          ) : kind === "fraction" || kind === "quotient-remainder" ? (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => dispatch({ type: "next" })}
+              className="h-14 rounded-2xl bg-brand-soft text-base font-bold text-brand active:scale-95 disabled:opacity-40"
+            >
+              다음 칸
+            </button>
+          ) : (
+            <span />
+          )}
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => dispatch({ type: "digit", d: "0" })}
+            className="h-14 rounded-2xl bg-white text-2xl font-bold shadow-sm ring-1 ring-brand/15 active:scale-95 disabled:opacity-40"
+          >
+            0
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => dispatch({ type: "back" })}
+            aria-label="지우기"
+            className="h-14 rounded-2xl bg-white text-xl font-bold text-muted shadow-sm ring-1 ring-brand/15 active:scale-95 disabled:opacity-40"
+          >
+            ⌫
+          </button>
+        </div>
+      )}
+      <button
+        type="button"
+        disabled={disabled || !answer}
+        onClick={submit}
+        className="mx-auto h-14 w-full max-w-xs rounded-2xl bg-brand text-xl font-bold text-white shadow-md active:scale-[0.98] disabled:opacity-40"
+      >
+        {submitLabel}
+      </button>
+    </div>
+  );
+}

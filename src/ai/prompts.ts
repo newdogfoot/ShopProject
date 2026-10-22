@@ -41,7 +41,13 @@ const visualSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("base-ten"), hundreds: z.number().int().min(0).max(9), tens: z.number().int().min(0).max(19), ones: z.number().int().min(0).max(19) }),
   z.object({ type: z.literal("number-line"), min: z.number().min(0).max(1000), max: z.number().min(1).max(1000), step: z.number().positive().max(100), marks: z.array(z.number()).max(6).optional() }),
   z.object({ type: z.literal("array"), rows: z.number().int().min(1).max(10), cols: z.number().int().min(1).max(10) }),
-  z.object({ type: z.literal("fraction-bar"), parts: z.number().int().min(1).max(12), shaded: z.number().int().min(0).max(36), bars: z.number().int().min(1).max(3).optional() }),
+  z.object({
+    type: z.literal("fraction-bar"),
+    parts: z.number().int().min(1).max(12),
+    shaded: z.number().int().min(0).max(36),
+    bars: z.number().int().min(1).max(3).optional(),
+    compare: z.object({ parts: z.number().int().min(1).max(12), shaded: z.number().int().min(0).max(12) }).optional(),
+  }),
 ]);
 
 export const ExplanationSchema = z.object({

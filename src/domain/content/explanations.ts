@@ -49,19 +49,12 @@ export function templateExplanation(input: ExplanationInput): Explanation {
   switch (input.strategy) {
     case "misconception": {
       const m = input.misconceptionId ? getMisconception(input.misconceptionId) : null;
-      steps = [
-        ...(m ? [{ text: m.childExplain }] : []),
-        { text: content.keyIdea, visual: input.example.visual },
-        ...exampleSteps(input.example).slice(1),
-      ];
+      steps = [...(m ? [{ text: m.childExplain }] : []), { text: content.keyIdea }, ...exampleSteps(input.example)];
       break;
     }
     case "concrete":
-      steps = [
-        { text: content.keyIdea },
-        ...content.concrete.map((t, i) => ({ text: t, visual: i === 0 ? input.example.visual : undefined })),
-        ...exampleSteps(input.example),
-      ];
+      // The picture goes with the example, whose numbers it shows.
+      steps = [{ text: content.keyIdea }, ...content.concrete.map((t) => ({ text: t })), ...exampleSteps(input.example)];
       break;
     case "analogy":
       steps = [...content.analogy.map((t) => ({ text: t })), { text: content.keyIdea }, ...exampleSteps(input.example)];
@@ -70,7 +63,9 @@ export function templateExplanation(input: ExplanationInput): Explanation {
       steps = [{ text: "한 단계씩 따라 해 봐요." }, ...exampleSteps(input.example)];
       break;
   }
-  return { title, steps, summary: skill.goal, source: "template" };
+  // Only promise a picture when there is one.
+  const shownTitle = input.strategy === "concrete" && !steps.some((s) => s.visual) ? "모형으로 생각해 봐요" : title;
+  return { title: shownTitle, steps, summary: skill.goal, source: "template" };
 }
 
 /** Hint text for a level (1 question, 2 first step, 3 all steps but the answer). */

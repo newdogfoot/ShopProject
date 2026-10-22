@@ -100,7 +100,7 @@ export const genFracCompare: Generator = (rng, difficulty) => {
       answer,
       bugs,
       steps: ["분자가 1로 같을 때는 분모가 작을수록 한 조각이 커요.", `${fm(1, a)}${josa(fm(1, a), "은/는")} ${a}조각 중 1조각, ${fm(1, b)}${josa(fm(1, b), "은/는")} ${b}조각 중 1조각이에요.`, `그래서 ${fm(1, a)} ${sym} ${fm(1, b)}`],
-      visual: { type: "fraction-bar", parts: Math.min(a, b), shaded: 1 },
+      visual: { type: "fraction-bar", parts: a, shaded: 1, compare: { parts: b, shaded: 1 } },
       guessRate: COMPARE_GUESS,
       check: { k: "cmp", a: num(rat(1, a)), b: num(rat(1, b)) },
     };
@@ -117,6 +117,7 @@ export const genFracCompare: Generator = (rng, difficulty) => {
       answer: cmpAns(sym),
       bugs: [],
       steps: ["분모가 같으면 분자가 클수록 큰 분수예요.", `분자 ${withJosa(x, "과/와")} ${y}${josa(y, "을/를")} 비교하면 ${x} ${sym} ${y}`, `그래서 ${fm(x, d)} ${sym} ${fm(y, d)}`],
+      visual: { type: "fraction-bar", parts: d, shaded: x, compare: { parts: d, shaded: y } },
       guessRate: COMPARE_GUESS,
       check: { k: "cmp", a: num(rat(x, d)), b: num(rat(y, d)) },
     };

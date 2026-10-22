@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { SKILLS } from "../curriculum/skills";
 import { generateItem, generateWordItem, GENERATORS } from "./index";
 import { answerMatches, evaluateExpr } from "./check";
-import { answerToInput, grade } from "./answer";
+import { answerToInput, grade, wrongInput } from "./answer";
 import { sameValue } from "./helpers";
 import { isMisconceptionId } from "./misconceptions";
 import { THEMES } from "../content/stories";
@@ -33,6 +33,7 @@ describe("item generators", () => {
 
           // 2. The correct keypad input is graded as correct.
           expect(grade(item, answerToInput(item.answer)).status, ctx).toBe("correct");
+          expect(grade(item, wrongInput(item.answer)).status, ctx).toBe("wrong");
 
           // 3. Every predicted wrong answer differs from the answer and is detected.
           for (const bug of item.bugs) {

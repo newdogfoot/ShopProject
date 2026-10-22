@@ -60,7 +60,14 @@ export type Visual =
     }
   | { type: "number-line"; min: number; max: number; step: number; marks?: number[]; jumps?: Array<{ from: number; to: number }> }
   | { type: "array"; rows: number; cols: number }
-  | { type: "fraction-bar"; parts: number; shaded: number; bars?: number };
+  | {
+      type: "fraction-bar";
+      parts: number;
+      shaded: number;
+      bars?: number;
+      /** A second bar of the same length drawn underneath, for comparing two fractions. */
+      compare?: { parts: number; shaded: number };
+    };
 
 /**
  * Semantic description of a question, evaluated independently in tests to check
