@@ -15,6 +15,13 @@
       "when": 1792730012913,
       "tag": "0001_reasons_and_error_types",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792732087374,
+      "tag": "0002_domains",
+      "breakpoints": true
     }
   ]
 }

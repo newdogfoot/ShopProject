@@ -3,10 +3,15 @@ import { SKILLS } from "../curriculum/skills";
 import { generateItem, generateWordItem, GENERATORS, itemFromId } from "./index";
 import { answerMatches, evaluateExpr } from "./check";
 import { answerToInput, grade, wrongInput } from "./answer";
-import { sameValue } from "./helpers";
+import { answerText, formatUnits, sameValue, splitUnits, UNITS, unitsAns } from "./helpers";
 import { isMisconceptionId } from "./misconceptions";
 import { THEMES } from "../content/stories";
-import type { Difficulty, Item } from "./types";
+import type { AnswerSpec, Difficulty, Item } from "./types";
+
+/** A bare item around an answer, for grading tests. */
+function itemWith(answer: AnswerSpec, bugs: Item["bugs"] = []): Item {
+  return { id: "T#1#1", skillId: "T", difficulty: 1, seed: 1, format: "computation", prompt: "", answer, bugs, steps: [], guessRate: 0.03, check: { k: "num", v: 0 } };
+}
 
 const SEEDS_PER_DIFFICULTY = 334; // ≈ 1,000 items per skill
 const DIFFICULTIES: Difficulty[] = [1, 2, 3];
@@ -159,6 +164,71 @@ describe("grading", () => {
     expect(grade(item, { kind: "integer", text: "" }).status).toBe("invalid");
     expect(grade(item, { kind: "integer", text: "1a" }).status).toBe("invalid");
     expect(grade(item, { kind: "integer", text: "０" }).status).toBe("wrong");
+  });
+
+  it("grades several-unit answers by value and asks for the simplest form", () => {
+    // 3시간 10분 − 1시간 40분 = 1시간 30분 (90분); borrowing 100 instead of 60 gives 1시간 70분 (130분).
+    const item = itemWith(unitsAns(UNITS.hourMin, 90), [{ misconceptionId: "TIME_BASE_100", answer: unitsAns(UNITS.hourMin, 130), feedback: "1시간은 60분이에요." }]);
+    expect(grade(item, { kind: "units", values: ["1", "30"] })).toMatchObject({ status: "correct", shown: "1시간 30분" });
+    expect(grade(item, { kind: "units", values: ["", "90"] })).toMatchObject({ status: "form", shown: "90분" });
+    expect(grade(item, { kind: "units", values: ["", "90"] }).formMessage).toContain("60분 = 1시간");
+    expect(grade(item, { kind: "units", values: ["1", "70"] })).toMatchObject({ status: "wrong", shown: "1시간 70분" });
+    expect(grade(item, { kind: "units", values: ["1", "70"] }).bug?.misconceptionId).toBe("TIME_BASE_100");
+    expect(grade(item, { kind: "units", values: ["", ""] }).status).toBe("invalid");
+    expect(grade(item, { kind: "units", values: ["1"] }).status).toBe("invalid");
+    expect(grade(item, { kind: "units", values: ["1", "3a"] }).status).toBe("invalid");
+    expect(grade(item, { kind: "integer", text: "90" }).status).toBe("invalid");
+    expect(grade(item, wrongInput(item.answer)).status).toBe("wrong");
+    expect(answerToInput(item.answer)).toEqual({ kind: "units", values: ["1", "30"] });
+
+    const length = itemWith(unitsAns(UNITS.mCm, 205));
+    expect(grade(length, { kind: "units", values: ["2", "5"] }).status).toBe("correct");
+    expect(grade(length, { kind: "units", values: ["1", "105"] }).formMessage).toContain("100 cm = 1 m");
+    expect(grade(itemWith({ kind: "integer", value: 12, unit: "cm²" }), { kind: "integer", text: "12" })).toMatchObject({ status: "correct", shown: "12 cm²" });
+    const clock = itemWith(unitsAns(UNITS.clock, 3 * 60));
+    expect(grade(clock, { kind: "units", values: ["3", ""] })).toMatchObject({ status: "correct", shown: "3시" });
+  });
+
+  it("works out kinds and labels independently", () => {
+    const label = (e: Parameters<typeof evaluateExpr>[0]) => {
+      const v = evaluateExpr(e);
+      return v.type === "label" ? v.value : null;
+    };
+    expect(label({ k: "angle-kind", degrees: 35 })).toBe("예각");
+    expect(label({ k: "angle-kind", degrees: 90 })).toBe("직각");
+    expect(label({ k: "angle-kind", degrees: 120 })).toBe("둔각");
+    expect(() => label({ k: "angle-kind", degrees: 180 })).toThrow();
+    expect(label({ k: "triangle-by-angles", angles: [50, 60, 70] })).toBe("예각삼각형");
+    expect(label({ k: "triangle-by-angles", angles: [30, 60, 90] })).toBe("직각삼각형");
+    expect(label({ k: "triangle-by-angles", angles: [20, 40, 120] })).toBe("둔각삼각형");
+    expect(() => label({ k: "triangle-by-angles", angles: [50, 60, 80] })).toThrow();
+    expect(label({ k: "triangle-by-sides", sides: [5, 5, 5] })).toBe("정삼각형");
+    expect(label({ k: "triangle-by-sides", sides: [5, 8, 5] })).toBe("이등변삼각형");
+    expect(label({ k: "triangle-by-sides", sides: [4, 5, 6] })).toBe("세 변의 길이가 모두 다른 삼각형");
+    expect(() => label({ k: "triangle-by-sides", sides: [1, 2, 3] })).toThrow();
+    expect(label({ k: "argmax", labels: ["사과", "포도", "귤"], values: [8, 12, 6] })).toBe("포도");
+    expect(label({ k: "argmin", labels: ["사과", "포도", "귤"], values: [8, 12, 6] })).toBe("귤");
+    expect(() => label({ k: "argmax", labels: ["a", "b"], values: [3, 3] })).toThrow();
+    expect([0, 1, 2, 3, 4].map((f) => label({ k: "likelihood", favorable: f, total: 4 }))).toEqual(["불가능하다", "~아닐 것 같다", "반반이다", "~일 것 같다", "확실하다"]);
+    expect(label({ k: "pattern-next", items: ["●", "▲", "▲", "●", "▲", "▲"] })).toBe("●");
+    expect(label({ k: "pattern-next", items: ["●", "▲", "▲", "●", "▲", "▲"], ahead: 2 })).toBe("▲");
+    expect(() => label({ k: "pattern-next", items: ["●", "▲", "■"] })).toThrow();
+    expect(answerMatches({ kind: "choice", options: ["둔각", "예각", "직각"], value: 1 }, evaluateExpr({ k: "angle-kind", degrees: 40 }))).toBe(true);
+  });
+
+  it("writes amounts with their units", () => {
+    expect(formatUnits(130, UNITS.hourMin)).toBe("2시간 10분");
+    expect(formatUnits(45, UNITS.hourMin)).toBe("45분");
+    expect(formatUnits(0, UNITS.hourMin)).toBe("0분");
+    expect(formatUnits(180, UNITS.clock)).toBe("3시");
+    expect(formatUnits(105, UNITS.mCm)).toBe("1 m 5 cm");
+    expect(formatUnits(3725, UNITS.hourMinSec)).toBe("1시간 2분 5초");
+    expect(splitUnits(2050, UNITS.lMl)).toEqual([2, 50]);
+    expect(answerText({ kind: "integer", value: 12, unit: "cm²" })).toBe("12 cm²");
+    expect(answerText({ kind: "integer", value: 60, unit: "°" })).toBe("60°");
+    expect(answerText({ kind: "integer", value: 7, unit: "개" })).toBe("7개");
+    expect(sameValue(unitsAns(UNITS.mCm, 100), unitsAns(UNITS.mCm, 100))).toBe(true);
+    expect(answerMatches(unitsAns(UNITS.kgG, 1500), evaluateExpr({ k: "add", a: { k: "num", v: 1000 }, b: { k: "num", v: 500 } }))).toBe(true);
   });
 
   it("matches the classic subtraction bug", () => {

@@ -9,12 +9,14 @@
  *    dependents as gaps and queues its direct prerequisites, walking down the
  *    prerequisite graph to the root gap.
  * 4. Strands are interleaved and the number of items is capped by grade.
+ * 5. Each domain (수와 연산, 도형과 측정, …) is diagnosed on its own, so a child
+ *    can check one area at a time. Prerequisites in other domains are left alone.
  *
  * The state is plain JSON so a diagnosis can be paused and resumed.
  */
 import { ancestorsOf, diagnosisRange, maximalSkills, skillTerm } from "../curriculum/graph";
 import { getSkill, STRANDS } from "../curriculum/skills";
-import { gradeBandOf, termIndex, type Grade, type Semester } from "../curriculum/types";
+import { gradeBandOf, termIndex, type DomainId, type Grade, type GradeBand, type Semester, type StrandId } from "../curriculum/types";
 import { deriveSeed } from "../math/rng";
 import { generateItem } from "../items";
 import type { Item } from "../items/types";
@@ -31,7 +33,17 @@ import {
   type SkillStatus,
 } from "../model/learner";
 
+/** Item caps for 수와 연산 by grade band. */
 export const MAX_ITEMS_BY_BAND = { "1-2": 12, "3-4": 20, "5-6": 25 } as const;
+/** Item caps per domain and grade band (the other domains have fewer skills). */
+export const MAX_DIAGNOSIS_ITEMS: Record<DomainId, Record<GradeBand, number>> = {
+  NUM_OPS: MAX_ITEMS_BY_BAND,
+  GEO_MEAS: { "1-2": 8, "3-4": 14, "5-6": 16 },
+  CHANGE: { "1-2": 4, "3-4": 6, "5-6": 8 },
+  DATA: { "1-2": 4, "3-4": 6, "5-6": 8 },
+};
+/** Strands an easy warm-up item may come from (any strand of the domain when missing). */
+const WARMUP_STRANDS: Partial<Record<DomainId, StrandId[]>> = { NUM_OPS: ["ADDSUB", "NUM"] };
 const MAX_ITEMS_PER_SKILL = 3;
 /** Ask a second item before inferring this many unchecked prerequisites from one answer. */
 const CONFIRM_LEVERAGE = 4;
@@ -41,6 +53,8 @@ export interface DiagnosisState {
   seed: number;
   grade: Grade;
   semester: Semester;
+  /** Domain being diagnosed (missing in states saved before domains existed: 수와 연산). */
+  domain?: DomainId;
   range: string[];
   maxItems: number;
   asked: number;
@@ -85,28 +99,28 @@ function interleave(ids: string[]): string[] {
   return out;
 }
 
-function pickWarmup(range: string[], grade: Grade, semester: Semester): string | null {
+function pickWarmup(range: string[], grade: Grade, semester: Semester, domain: DomainId): string | null {
   const current = termIndex(grade, semester);
-  const easy = range.filter((id) => {
-    const strand = getSkill(id).strand;
-    return (strand === "ADDSUB" || strand === "NUM") && skillTerm(id) <= current - 4;
-  });
+  const strands = WARMUP_STRANDS[domain];
+  const easy = range.filter((id) => (!strands || strands.includes(getSkill(id).strand)) && skillTerm(id) <= current - 4);
   if (easy.length === 0) return null;
   return easy.sort((a, b) => skillTerm(b) - skillTerm(a))[0];
 }
 
-export function startDiagnosis(opts: { grade: Grade; semester: Semester; seed: number; now: number }): DiagnosisState {
-  const range = diagnosisRange(opts.grade, opts.semester);
+export function startDiagnosis(opts: { grade: Grade; semester: Semester; seed: number; now: number; domain?: DomainId }): DiagnosisState {
+  const domain = opts.domain ?? "NUM_OPS";
+  const range = diagnosisRange(opts.grade, opts.semester, domain);
   return {
     version: 1,
     seed: opts.seed,
     grade: opts.grade,
     semester: opts.semester,
+    domain,
     range,
-    maxItems: MAX_ITEMS_BY_BAND[gradeBandOf(opts.grade)],
+    maxItems: MAX_DIAGNOSIS_ITEMS[domain][gradeBandOf(opts.grade)],
     asked: 0,
     queue: interleave(maximalSkills(range)),
-    warmupSkill: pickWarmup(range, opts.grade, opts.semester),
+    warmupSkill: pickWarmup(range, opts.grade, opts.semester, domain),
     warmupDone: false,
     probing: null,
     learner: {},

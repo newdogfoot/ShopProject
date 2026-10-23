@@ -6,6 +6,7 @@ import { getDb, type Db } from "@/db/client";
 import {
   activeSession,
   createSession,
+  diagnosisRecord,
   getStudent,
   insertAttempt,
   insertExplanation,
@@ -22,8 +23,8 @@ import { bankedWordProblem, explainStep, getExplanation, getHint, gradeExplanati
 import { scrubPersonalInfo } from "@/ai/privacy";
 import { itemFromId } from "@/domain/items";
 import { templateHint } from "@/domain/content/explanations";
-import { getSkill } from "@/domain/curriculum/skills";
-import { gradeBandOf, type Grade, type Semester } from "@/domain/curriculum/types";
+import { activeDomains, getDomain, getSkill, isDomainId } from "@/domain/curriculum/skills";
+import { gradeBandOf, type DomainId, type Grade, type Semester } from "@/domain/curriculum/types";
 import { isTheme, type Theme } from "@/domain/content/stories";
 import { randomSeed } from "@/domain/math/rng";
 import { grade as gradeAnswer } from "@/domain/items/answer";
@@ -57,6 +58,7 @@ import {
   type SessionView,
 } from "./views";
 import { warmExplanations, warmWordProblem } from "./warm";
+import { diagnosedDomains } from "./data";
 
 type StudentRow = NonNullable<Awaited<ReturnType<typeof getCurrentStudent>>>;
 
@@ -70,6 +72,7 @@ const AnswerSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("compare"), value: field }),
   z.object({ kind: z.literal("integer-list"), text: z.string().max(200) }),
   z.object({ kind: z.literal("choice"), index: z.string().max(3) }),
+  z.object({ kind: z.literal("units"), values: z.array(field).min(1).max(3) }),
   // Cut to 100 characters after cleaning; the raw limit only stops abuse.
   z.object({ kind: z.literal("text"), text: z.string().max(400) }),
 ]);
@@ -108,7 +111,20 @@ interface DiagnosisRun {
   shownAt: number;
 }
 
+/** A domain from the browser: only domains that have skills are accepted. */
+function checkedDomain(domain: unknown): DomainId {
+  return typeof domain === "string" && isDomainId(domain) && activeDomains().some((d) => d.id === domain) ? domain : "NUM_OPS";
+}
+
+/** Another domain still waiting for its first diagnosis (to suggest next). */
+async function nextDomain(db: Db, studentId: string, current: DomainId): Promise<{ id: DomainId; name: string } | undefined> {
+  const done = await diagnosedDomains(db, studentId);
+  const next = activeDomains().find((d) => d.id !== current && !done.includes(d.id));
+  return next ? { id: next.id, name: next.name } : undefined;
+}
+
 async function finishDiagnosis(db: Db, student: StudentRow, sessionId: string, engine: DiagnosisState): Promise<DiagnosisView> {
+  const domain = engine.domain ?? "NUM_OPS";
   const result = diagnosisResult(engine);
   const before = await loadLearner(db, student.id);
   const after: LearnerState = { ...before };
@@ -117,16 +133,19 @@ async function finishDiagnosis(db: Db, student: StudentRow, sessionId: string, e
     if (before[id]?.evidence !== "direct") after[id] = st;
   }
   await saveLearner(db, student.id, before, after);
-  await markDiagnosed(db, student.id);
+  await markDiagnosed(db, student.id, domain);
   await saveSessionState(db, sessionId, { engine, formRetry: false, shownAt: Date.now() } satisfies DiagnosisRun, true);
   const statuses = Object.values(result.statusById);
   return {
     type: "done",
+    domain,
+    domainName: getDomain(domain).name,
     mastered: statuses.filter((s) => s === "mastered" || s === "inferred").length,
     toLearn: result.rootGaps.map((id) => getSkill(id).name),
     misconceptions: statuses.filter((s) => s === "misconception").length,
     asked: engine.asked,
     skipped: engine.range.length === 0,
+    next: await nextDomain(db, student.id, domain),
   };
 }
 
@@ -137,34 +156,57 @@ async function renderDiagnosis(db: Db, student: StudentRow, sessionId: string, r
   const same = previous === item.id;
   const next: DiagnosisRun = { engine: state, formRetry: same ? run.formRetry : false, shownAt: same ? run.shownAt : Date.now() };
   await saveSessionState(db, sessionId, next);
-  return { type: "item", item: toItemView(item, "diagnosis"), progress: diagnosisProgress(state), asked: state.asked, maxItems: state.maxItems };
+  const domain = state.domain ?? "NUM_OPS";
+  return {
+    type: "item",
+    domain,
+    domainName: getDomain(domain).name,
+    item: toItemView(item, "diagnosis"),
+    progress: diagnosisProgress(state),
+    asked: state.asked,
+    maxItems: state.maxItems,
+  };
 }
 
-async function loadDiagnosis(db: Db, student: StudentRow) {
-  let row = await activeSession(db, student.id, "diagnosis");
+async function loadDiagnosis(db: Db, student: StudentRow, domain: DomainId) {
+  let row = await activeSession(db, student.id, "diagnosis", domain);
   if (!row) {
-    const engine = startDiagnosis({ grade: student.grade as Grade, semester: student.semester as Semester, seed: randomSeed(), now: Date.now() });
-    row = await createSession(db, student.id, "diagnosis", { engine, formRetry: false, shownAt: Date.now() } satisfies DiagnosisRun);
+    const engine = startDiagnosis({ grade: student.grade as Grade, semester: student.semester as Semester, seed: randomSeed(), now: Date.now(), domain });
+    row = await createSession(db, student.id, "diagnosis", { engine, formRetry: false, shownAt: Date.now() } satisfies DiagnosisRun, domain);
   }
   return { row, run: row.state as DiagnosisRun };
 }
 
-export async function diagnosisView(): Promise<DiagnosisView> {
+export async function diagnosisView(domainInput: DomainId): Promise<DiagnosisView> {
+  const domain = checkedDomain(domainInput);
   const student = await currentStudent();
   const db = await getDb();
-  if (student.diagnosedAt && !(await activeSession(db, student.id, "diagnosis"))) {
-    return { type: "done", mastered: 0, toLearn: [], misconceptions: 0, asked: 0, skipped: true };
+  const record = await diagnosisRecord(db, student.id);
+  if (record[domain] && !(await activeSession(db, student.id, "diagnosis", domain))) {
+    return {
+      type: "done",
+      domain,
+      domainName: getDomain(domain).name,
+      mastered: 0,
+      toLearn: [],
+      misconceptions: 0,
+      asked: 0,
+      skipped: true,
+      alreadyDone: true,
+      next: await nextDomain(db, student.id, domain),
+    };
   }
-  const { row, run } = await loadDiagnosis(db, student);
+  const { row, run } = await loadDiagnosis(db, student, domain);
   return renderDiagnosis(db, student, row.id, run);
 }
 
-export async function diagnosisAnswer(itemId: string, answer: StudentAnswer): Promise<{ view: DiagnosisView; feedback?: FeedbackView }> {
+export async function diagnosisAnswer(domainInput: DomainId, itemId: string, answer: StudentAnswer): Promise<{ view: DiagnosisView; feedback?: FeedbackView }> {
+  const domain = checkedDomain(domainInput);
   const student = await currentStudent();
   const db = await getDb();
   // Answers only continue a diagnosis in progress; a stale tab must not start a new one.
-  const row = await activeSession(db, student.id, "diagnosis");
-  if (!row) return { view: await diagnosisView() };
+  const row = await activeSession(db, student.id, "diagnosis", domain);
+  if (!row) return { view: await diagnosisView(domain) };
   const run = row.state as DiagnosisRun;
   const current = run.engine.current;
   if (!current || current.id !== itemId) return { view: await renderDiagnosis(db, student, row.id, run) };
@@ -223,6 +265,7 @@ async function loadSession(student: StudentRow): Promise<SessionCtx> {
     row = null;
   }
   if (!row) {
+    const diagnosed = await diagnosedDomains(db, student.id);
     const state = startSession({
       learner,
       grade: student.grade as Grade,
@@ -230,6 +273,7 @@ async function loadSession(student: StudentRow): Promise<SessionCtx> {
       theme: themeOf(student),
       seed: randomSeed(),
       now: Date.now(),
+      domains: diagnosed.length > 0 ? diagnosed : ["NUM_OPS"],
       // Grade 3+ write their "why" answers when the guardian allows it and AI can grade them.
       reasonMode: student.grade >= 3 && student.allowWriting && aiEnabled() ? "write" : "choice",
     });

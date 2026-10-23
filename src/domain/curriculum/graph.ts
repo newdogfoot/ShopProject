@@ -1,6 +1,6 @@
 /** Prerequisite-graph helpers over the concept map. */
-import { getSkill, SKILLS } from "./skills";
-import { termIndex, type Grade, type Semester, type Skill } from "./types";
+import { domainOf, getSkill, SKILLS } from "./skills";
+import { termIndex, type DomainId, type Grade, type Semester, type Skill } from "./types";
 
 const ALL: readonly Skill[] = SKILLS;
 
@@ -71,19 +71,21 @@ export function skillTerm(id: string): number {
   return termIndex(s.grade, s.semester);
 }
 
+const inDomain = (s: Skill, domain?: DomainId) => domain === undefined || domainOf(s.id) === domain;
+
 /**
- * Skills a student "should already know" (taught in earlier semesters).
- * These are the only skills that diagnosis may call a gap.
+ * Skills a student "should already know" (taught in earlier semesters), optionally
+ * in one domain. These are the only skills that diagnosis may call a gap.
  */
-export function diagnosisRange(grade: Grade, semester: Semester): string[] {
+export function diagnosisRange(grade: Grade, semester: Semester, domain?: DomainId): string[] {
   const current = termIndex(grade, semester);
-  return ALL.filter((s) => termIndex(s.grade, s.semester) < current).map((s) => s.id);
+  return ALL.filter((s) => termIndex(s.grade, s.semester) < current && inDomain(s, domain)).map((s) => s.id);
 }
 
-/** Skills up to and including the current semester (gaps + current progress). */
-export function learningRange(grade: Grade, semester: Semester): string[] {
+/** Skills up to and including the current semester (gaps + current progress), optionally in one domain. */
+export function learningRange(grade: Grade, semester: Semester, domain?: DomainId): string[] {
   const current = termIndex(grade, semester);
-  return ALL.filter((s) => termIndex(s.grade, s.semester) <= current).map((s) => s.id);
+  return ALL.filter((s) => termIndex(s.grade, s.semester) <= current && inDomain(s, domain)).map((s) => s.id);
 }
 
 /** Skills in `ids` that no other skill in `ids` depends on (the "tops" of the range). */

@@ -5,6 +5,7 @@
  */
 import { boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import type { SkillState } from "@/domain/model/learner";
+import type { DomainId } from "@/domain/curriculum/types";
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 
@@ -57,10 +58,22 @@ export const students = pgTable(
     readAloud: boolean("read_aloud").notNull().default(false),
     /** Grade 3+: write "why" answers (graded by AI) instead of picking one. Guardians can turn it off. */
     allowWriting: boolean("allow_writing").notNull().default(true),
-    diagnosedAt: timestamp("diagnosed_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [index("students_guardian_idx").on(t.guardianId)],
+);
+
+/** Which areas of mathematics (domains) a child has finished the first diagnosis in. */
+export const diagnoses = pgTable(
+  "diagnoses",
+  {
+    studentId: uuid("student_id")
+      .notNull()
+      .references(() => students.id, { onDelete: "cascade" }),
+    domain: text("domain").$type<DomainId>().notNull(),
+    diagnosedAt: timestamp("diagnosed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.studentId, t.domain] })],
 );
 
 /** Learner model: one row per (student, skill). */
@@ -86,6 +99,8 @@ export const learningSessions = pgTable(
       .notNull()
       .references(() => students.id, { onDelete: "cascade" }),
     kind: text("kind").$type<"diagnosis" | "learning">().notNull(),
+    /** The domain a diagnosis covers (learning sessions mix domains, so null). */
+    domain: text("domain").$type<DomainId>(),
     status: text("status").$type<"active" | "finished">().notNull().default("active"),
     state: jsonb("state").notNull(),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),

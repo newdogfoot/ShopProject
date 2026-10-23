@@ -64,6 +64,21 @@ export function looseAnswerMatches(text: string, spec: AnswerSpec): boolean {
       if (nums.length === 1) return spec.remainder === 0 && nums[0] === spec.quotient;
       return nums.length >= 2 && nums[0] === spec.quotient && nums[1] === spec.remainder;
     }
+    case "units": {
+      // "2시간 10분", "1 m 5 cm" or everything in the smallest unit ("130분").
+      let total = 0;
+      let found = false;
+      for (const part of spec.parts) {
+        const label = part.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        // "m" must not be the start of "mm"/"mL", nor "시" the start of "시간".
+        const m = new RegExp(`(\\d[\\d,]*)\\s*${label}(?![a-zA-Z])${part.label === "시" ? "(?!간)" : ""}`).exec(text.replace(/[{}]/g, ""));
+        if (m) {
+          total += Number(m[1].replace(/,/g, "")) * part.per;
+          found = true;
+        }
+      }
+      return found && total === spec.value;
+    }
     default:
       return false;
   }

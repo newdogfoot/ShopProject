@@ -4,7 +4,9 @@ import { useEffect, useEffectEvent, useReducer } from "react";
 import type { AnswerKind, FractionForm, StudentAnswer } from "@/domain/items/types";
 import { MathText } from "./MathText";
 
-type Field = "text" | "whole" | "num" | "den" | "quotient" | "remainder";
+type Field = "text" | "whole" | "num" | "den" | "quotient" | "remainder" | "u0" | "u1" | "u2";
+
+const UNIT_FIELDS = ["u0", "u1", "u2"] as const;
 
 interface State {
   fields: Record<Field, string>;
@@ -25,29 +27,32 @@ type Action =
 
 const MAX_LEN = 13;
 
-function order(kind: AnswerKind, form?: FractionForm): Field[] {
+/** Boxes in the order the "next box" key visits them. */
+function order(kind: AnswerKind, form?: FractionForm, unitCount = 0): Field[] {
   if (kind === "fraction") return form === "improper" ? ["num", "den"] : ["whole", "num", "den"];
   if (kind === "quotient-remainder") return ["quotient", "remainder"];
+  if (kind === "units") return UNIT_FIELDS.slice(0, Math.max(1, Math.min(3, unitCount)));
   return ["text"];
 }
 
 function initialFocus(kind: AnswerKind, form?: FractionForm): Field {
   if (kind === "fraction") return form === "mixed" ? "whole" : "num";
   if (kind === "quotient-remainder") return "quotient";
+  if (kind === "units") return "u0";
   return "text";
 }
 
 function init(args: { kind: AnswerKind; form?: FractionForm }): State {
   return {
-    fields: { text: "", whole: "", num: "", den: "", quotient: "", remainder: "" },
+    fields: { text: "", whole: "", num: "", den: "", quotient: "", remainder: "", u0: "", u1: "", u2: "" },
     focus: initialFocus(args.kind, args.form),
     compare: "",
     choice: "",
   };
 }
 
-function makeReducer(kind: AnswerKind, form?: FractionForm) {
-  const fields = order(kind, form);
+function makeReducer(kind: AnswerKind, form?: FractionForm, unitCount = 0) {
+  const fields = order(kind, form, unitCount);
   return (s: State, a: Action): State => {
     switch (a.type) {
       case "digit": {
@@ -84,7 +89,7 @@ function makeReducer(kind: AnswerKind, form?: FractionForm) {
   };
 }
 
-function toAnswer(kind: AnswerKind, s: State): StudentAnswer | null {
+function toAnswer(kind: AnswerKind, s: State, unitCount: number): StudentAnswer | null {
   const f = s.fields;
   switch (kind) {
     case "integer":
@@ -102,6 +107,11 @@ function toAnswer(kind: AnswerKind, s: State): StudentAnswer | null {
       return f.text ? { kind, text: f.text } : null;
     case "choice":
       return s.choice ? { kind, index: s.choice } : null;
+    case "units": {
+      // An empty box counts as 0 (2시간 → "2", ""), but something must be typed.
+      const values = UNIT_FIELDS.slice(0, unitCount).map((u) => f[u]);
+      return values.some((v) => v !== "") ? { kind, values } : null;
+    }
     case "text":
       // Written answers use TextAnswer, not the keypad.
       return null;
@@ -127,6 +137,8 @@ export function Keypad({
   kind,
   form,
   options = [],
+  units = [],
+  unit,
   disabled,
   onSubmit,
   submitLabel = "확인",
@@ -135,12 +147,18 @@ export function Keypad({
   form?: FractionForm;
   /** Options for choice answers. */
   options?: string[];
+  /** Unit of each box for several-unit answers, largest first (["시간", "분"]). */
+  units?: string[];
+  /** Unit shown after the answer box (cm, °, % …). */
+  unit?: string;
   disabled?: boolean;
   onSubmit: (answer: StudentAnswer) => void;
   submitLabel?: string;
 }) {
-  const [state, dispatch] = useReducer(makeReducer(kind, form), { kind, form }, init);
-  const answer = toAnswer(kind, state);
+  const unitCount = Math.min(3, units.length);
+  const [state, dispatch] = useReducer(makeReducer(kind, form, unitCount), { kind, form }, init);
+  const answer = toAnswer(kind, state, unitCount);
+  const multiBox = kind === "fraction" || kind === "quotient-remainder" || (kind === "units" && unitCount > 1);
   const submit = () => {
     if (answer && !disabled) onSubmit(answer);
   };
@@ -164,7 +182,7 @@ export function Keypad({
       e.preventDefault();
       submit();
     } else if (e.key === "." || e.key === ",") dispatch({ type: "char", c: e.key });
-    else if ((e.key === "/" || e.key === "ArrowRight") && (kind === "fraction" || kind === "quotient-remainder")) {
+    else if ((e.key === "/" || e.key === "ArrowRight") && multiBox) {
       e.preventDefault();
       dispatch({ type: "next" });
     } else if (kind === "compare" && (e.key === "<" || e.key === ">" || e.key === "=")) dispatch({ type: "compare", v: e.key });
@@ -231,6 +249,17 @@ export function Keypad({
             ))}
           </div>
         );
+      case "units":
+        return (
+          <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-3">
+            {UNIT_FIELDS.slice(0, unitCount).map((u, i) => (
+              <span key={u} className="flex items-center gap-1.5">
+                {box(u, units[i])}
+                <span className="text-xl font-bold">{units[i]}</span>
+              </span>
+            ))}
+          </div>
+        );
       case "choice":
         return (
           <div className="flex flex-col gap-2" role="radiogroup" aria-label="보기">
@@ -258,7 +287,12 @@ export function Keypad({
           </div>
         );
       default:
-        return <div className="flex justify-center">{box("text", "답", true)}</div>;
+        return (
+          <div className="flex items-center justify-center gap-2">
+            {box("text", "답", true)}
+            {unit && <span className="text-xl font-bold">{unit}</span>}
+          </div>
+        );
     }
   })();
 
@@ -291,7 +325,7 @@ export function Keypad({
             >
               {extra}
             </button>
-          ) : kind === "fraction" || kind === "quotient-remainder" ? (
+          ) : multiBox ? (
             <button
               type="button"
               disabled={disabled}

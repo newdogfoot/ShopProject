@@ -2,12 +2,22 @@ export type Grade = 1 | 2 | 3 | 4 | 5 | 6;
 export type Semester = 1 | 2;
 export type GradeBand = "1-2" | "3-4" | "5-6";
 
+/** The four areas of elementary mathematics in the 2022 revised curriculum. */
+export type DomainId = "NUM_OPS" | "CHANGE" | "GEO_MEAS" | "DATA";
+
+export interface Domain {
+  id: DomainId;
+  name: string;
+  emoji: string;
+}
+
 export type StrandId = "NUM" | "ADDSUB" | "MUL" | "DIV" | "MIXED" | "FRAC" | "DEC";
 
 export interface Strand {
   id: StrandId;
   name: string;
   emoji: string;
+  domain: DomainId;
 }
 
 export interface Skill {

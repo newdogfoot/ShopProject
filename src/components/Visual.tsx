@@ -1,5 +1,12 @@
-/** Pictures drawn by code (never by AI): dots, base-ten blocks, number line, arrays, fraction bars. */
+/**
+ * Pictures drawn by code (never by AI): dots, base-ten blocks, number line,
+ * arrays, fraction bars, and the measuring, shape and data pictures in ./visuals.
+ */
 import type { Visual } from "@/domain/items/types";
+import { AngleView, Clock, Ruler } from "./visuals/Measure";
+import { CubePlan, Cubes, Figure, Solid } from "./visuals/Geometry";
+import { BarChart, DataTable, LineChart, Pictograph, RatioGraph } from "./visuals/Charts";
+import { Objects, Shapes } from "./visuals/Things";
 
 const INK = "#4c3bd1";
 const FILL = "#b9a8ff";
@@ -153,7 +160,7 @@ function FractionBars({ parts, shaded, bars, compare }: { parts: number; shaded:
   );
 }
 
-export function VisualView({ visual }: { visual: Visual }) {
+export function VisualView({ visual }: { visual: Visual }): React.ReactNode {
   switch (visual.type) {
     case "dots":
       return <Dots {...visual} />;
@@ -165,5 +172,33 @@ export function VisualView({ visual }: { visual: Visual }) {
       return <ArrayDots rows={visual.rows} cols={visual.cols} />;
     case "fraction-bar":
       return <FractionBars parts={visual.parts} shaded={visual.shaded} bars={visual.bars} compare={visual.compare} />;
+    case "clock":
+      return <Clock {...visual} />;
+    case "ruler":
+      return <Ruler {...visual} />;
+    case "angle":
+      return <AngleView {...visual} />;
+    case "figure":
+      return <Figure {...visual} />;
+    case "solid":
+      return <Solid {...visual} />;
+    case "cubes":
+      return <Cubes {...visual} />;
+    case "cube-plan":
+      return <CubePlan {...visual} />;
+    case "bar-chart":
+      return <BarChart {...visual} />;
+    case "line-chart":
+      return <LineChart {...visual} />;
+    case "pictograph":
+      return <Pictograph {...visual} />;
+    case "table":
+      return <DataTable {...visual} />;
+    case "ratio-graph":
+      return <RatioGraph {...visual} />;
+    case "shapes":
+      return <Shapes {...visual} />;
+    case "objects":
+      return <Objects {...visual} />;
   }
 }

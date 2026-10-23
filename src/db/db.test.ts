@@ -9,6 +9,8 @@ import {
   createStudent,
   deleteAuthSession,
   deleteStudent,
+  diagnosesInProgress,
+  diagnosisRecord,
   errorTypeStats,
   findGuardianByEmail,
   getStudent,
@@ -19,6 +21,7 @@ import {
   listExplanations,
   listStudents,
   loadLearner,
+  markDiagnosed,
   misconceptionExamples,
   REQUIRED_CONSENTS,
   saveLearner,
@@ -114,6 +117,31 @@ describe("students and learning data", () => {
     expect(await deleteStudent(db, g.id, child.id)).toBe(true);
     expect(await loadLearner(db, child.id)).toEqual({});
     expect((await attemptStats(db, child.id, new Date(0))).count).toBe(0);
+  });
+});
+
+describe("diagnoses by domain", () => {
+  it("records each domain's first diagnosis and keeps diagnosis sessions apart", async () => {
+    const g = await createGuardian(db, "domains@example.com", "hash", []);
+    const child = await createStudent(db, g.id, { nickname: "모양", grade: 4, semester: 2, theme: "space", readAloud: false });
+    expect(await diagnosisRecord(db, child.id)).toEqual({});
+    const num = await createSession(db, child.id, "diagnosis", { a: 1 }, "NUM_OPS");
+    const geo = await createSession(db, child.id, "diagnosis", { b: 1 }, "GEO_MEAS");
+    expect((await activeSession(db, child.id, "diagnosis", "GEO_MEAS"))?.id).toBe(geo.id);
+    expect((await activeSession(db, child.id, "diagnosis", "NUM_OPS"))?.id).toBe(num.id);
+    expect((await diagnosesInProgress(db, child.id)).sort()).toEqual(["GEO_MEAS", "NUM_OPS"]);
+
+    await saveSessionState(db, num.id, {}, true);
+    await markDiagnosed(db, child.id, "NUM_OPS", new Date("2026-10-01T00:00:00Z"));
+    // Diagnosing again only moves the date.
+    await markDiagnosed(db, child.id, "NUM_OPS", new Date("2026-10-02T00:00:00Z"));
+    const record = await diagnosisRecord(db, child.id);
+    expect(Object.keys(record)).toEqual(["NUM_OPS"]);
+    expect(record.NUM_OPS?.toISOString()).toBe("2026-10-02T00:00:00.000Z");
+    expect(await diagnosesInProgress(db, child.id)).toEqual(["GEO_MEAS"]);
+
+    expect(await deleteStudent(db, g.id, child.id)).toBe(true);
+    expect(await diagnosisRecord(db, child.id)).toEqual({});
   });
 });
 

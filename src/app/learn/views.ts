@@ -3,6 +3,7 @@ import { markupToSpeech } from "@/domain/math/markup";
 import { answerToInput, wrongInput } from "@/domain/items/answer";
 import { answerText } from "@/domain/items/helpers";
 import type { AnswerKind, FractionForm, Item, StudentAnswer, Visual } from "@/domain/items/types";
+import type { DomainId } from "@/domain/curriculum/types";
 import type { ItemPurpose } from "@/domain/tutor/cycle";
 
 export interface ItemView {
@@ -19,6 +20,10 @@ export interface ItemView {
   options?: string[];
   /** Longest written answer (text answers). */
   maxLength?: number;
+  /** Unit of each box for several-unit answers (["시간", "분"]). */
+  units?: string[];
+  /** Unit shown after the answer box (cm, °, % …). */
+  unit?: string;
   /** Only in E2E test mode (E2E_TEST_MODE=1, never in production): keypad inputs that answer right and wrong. */
   test?: { correct: StudentAnswer; wrong: StudentAnswer; misconception?: StudentAnswer };
 }
@@ -63,8 +68,21 @@ export type SessionView =
   | { type: "summary"; answered: number; firstTryCorrect: number; mastered: string[]; skipped: string[]; unlocked: string[]; stuck: string[]; reviewed: number; tookBreak: boolean };
 
 export type DiagnosisView =
-  | { type: "item"; item: ItemView; progress: number; asked: number; maxItems: number }
-  | { type: "done"; mastered: number; toLearn: string[]; misconceptions: number; asked: number; skipped: boolean };
+  | { type: "item"; domain: DomainId; domainName: string; item: ItemView; progress: number; asked: number; maxItems: number }
+  | {
+      type: "done";
+      domain: DomainId;
+      domainName: string;
+      mastered: number;
+      toLearn: string[];
+      misconceptions: number;
+      asked: number;
+      skipped: boolean;
+      /** This domain had been diagnosed before (nothing new to show). */
+      alreadyDone?: boolean;
+      /** Another domain that still needs its first diagnosis. */
+      next?: { id: DomainId; name: string };
+    };
 
 export const PURPOSE_LABEL: Record<ItemPurpose | "diagnosis", string> = {
   diagnosis: "실력 확인",
@@ -92,6 +110,8 @@ export function toItemView(item: Item, purpose: ItemPurpose | "diagnosis"): Item
     purposeLabel: PURPOSE_LABEL[purpose],
     options: item.answer.kind === "choice" ? item.answer.options : undefined,
     maxLength: item.answer.kind === "text" ? item.answer.maxLength : undefined,
+    units: item.answer.kind === "units" ? item.answer.parts.map((p) => p.label) : undefined,
+    unit: item.answer.kind === "integer" || item.answer.kind === "decimal" ? item.answer.unit : undefined,
     test: process.env.E2E_TEST_MODE === "1" ? testInputs(item) : undefined,
   };
 }

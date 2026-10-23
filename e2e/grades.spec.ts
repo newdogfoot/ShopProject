@@ -8,7 +8,7 @@ test("grades 1–2: no diagnosis in grade 1 semester 1, a short one in grade 2, 
 
   // Grade 1, semester 1: nothing has been taught yet, so learning starts right away.
   await chooseChild(page, "콩이");
-  await page.getByRole("link", { name: "실력 확인 시작" }).click();
+  await page.getByRole("link", { name: "수와 연산 실력 확인 시작" }).click();
   await expect(page.getByTestId("diagnosis-done")).toBeVisible();
   await expect(page.getByText("지금 학기에는 확인할 내용이 없어서")).toBeVisible();
   await page.getByRole("link", { name: "오늘의 학습 시작" }).click();
@@ -16,7 +16,7 @@ test("grades 1–2: no diagnosis in grade 1 semester 1, a short one in grade 2, 
 
   // Grade 2: the diagnosis stays short (at most 12 problems for grades 1–2).
   await chooseChild(page, "토리");
-  await page.getByRole("link", { name: "실력 확인 시작" }).click();
+  await page.getByRole("link", { name: "수와 연산 실력 확인 시작" }).click();
   const { asked } = await runDiagnosis(page, () => "correct");
   expect(asked).toBeGreaterThanOrEqual(3);
   expect(asked).toBeLessThanOrEqual(12);
@@ -29,7 +29,7 @@ test("grade 5: a misconception answer shows up for the guardian with the child's
   await signUp(page, uniqueEmail("g5"));
   await addChild(page, { nickname: "하늘", grade: 5, semester: 2, expectReadAloud: false });
   await chooseChild(page, "하늘");
-  await page.getByRole("link", { name: "실력 확인 시작" }).click();
+  await page.getByRole("link", { name: "수와 연산 실력 확인 시작" }).click();
 
   // Fractions and decimals answered with the typical wrong answer, everything else right.
   const { asked, usedMisconception } = await runDiagnosis(page, (id) => (id.startsWith("FRAC_") || id.startsWith("DEC_") ? "misconception" : "correct"));

@@ -145,6 +145,20 @@ describe("planner", () => {
     expect(plan.some((p) => p.kind === "challenge")).toBe(true);
   });
 
+  it("plans only the domains that were diagnosed", () => {
+    const range = diagnosisRange(3, 2);
+    const learner = masteredLearner(range.filter((id) => id !== "AS_2D_BORROW_SUB" && id !== "AS_3D_SUB"), now);
+    learner["AS_2D_BORROW_SUB"] = { ...emptySkillState("AS_2D_BORROW_SUB"), evidence: "direct", p: 0.05, attempts: 2 };
+    expect(buildPlan(learner, { grade: 3, semester: 2, now, domains: ["NUM_OPS"] })).toEqual(buildPlan(learner, { grade: 3, semester: 2, now }));
+    expect(buildPlan(learner, { grade: 3, semester: 2, now, domains: [] })).toEqual([]);
+  });
+
+  it("can take prerequisites as known without evidence", () => {
+    const learner: LearnerState = {};
+    expect(learnableSkills(learner, ["AS_2D_BORROW_SUB"])).toEqual([]);
+    expect(learnableSkills(learner, ["AS_2D_BORROW_SUB"], () => true)).toEqual(["AS_2D_BORROW_SUB"]);
+  });
+
   it("previews the next semester when everything is mastered", () => {
     const learner = masteredLearner(learningRange(2, 1), now);
     const plan = buildPlan(learner, { grade: 2, semester: 1, now });

@@ -3,7 +3,9 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { Loading, PageShell } from "@/components/ui";
 import { requireStudent } from "@/auth/session";
+import { getDb } from "@/db/client";
 import { sessionView } from "../actions";
+import { diagnosedDomains } from "../data";
 import { SessionRunner } from "./SessionRunner";
 
 export const metadata: Metadata = { title: "오늘의 학습" };
@@ -20,7 +22,8 @@ export default function SessionPage() {
 
 async function Session() {
   const student = await requireStudent();
-  if (!student.diagnosedAt) redirect("/learn/diagnosis");
+  // Learning plans come from a diagnosis: do one first.
+  if ((await diagnosedDomains(await getDb(), student.id)).length === 0) redirect("/learn/diagnosis");
   const view = await sessionView();
   return <SessionRunner initial={view} readAloud={student.readAloud} />;
 }

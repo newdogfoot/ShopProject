@@ -4,7 +4,7 @@
  * state between requests and renders the screen it returns.
  */
 import { SKILL_IDS, getSkill } from "../curriculum/skills";
-import { gradeBandOf, type Grade, type Semester } from "../curriculum/types";
+import { gradeBandOf, type DomainId, type Grade, type Semester } from "../curriculum/types";
 import { deriveSeed } from "../math/rng";
 import { generateItem, generateWordItem } from "../items";
 import { generateReasonItem, type ReasonMode } from "../items/reason";
@@ -122,6 +122,8 @@ export function startSession(opts: {
   now: number;
   budgetMs?: number;
   reasonMode?: ReasonMode;
+  /** Domains to plan (the diagnosed ones); all when missing. */
+  domains?: DomainId[];
 }): SessionState {
   return {
     version: 1,
@@ -129,7 +131,7 @@ export function startSession(opts: {
     grade: opts.grade,
     semester: opts.semester,
     theme: opts.theme,
-    plan: buildPlan(opts.learner, { grade: opts.grade, semester: opts.semester, now: opts.now }),
+    plan: buildPlan(opts.learner, { grade: opts.grade, semester: opts.semester, now: opts.now, domains: opts.domains }),
     stepIndex: 0,
     cycle: null,
     active: null,

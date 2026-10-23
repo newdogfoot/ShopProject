@@ -4,7 +4,8 @@ import { getSkill } from "../curriculum/skills";
 import type { Grade, Semester } from "../curriculum/types";
 import { createRng, type Rng } from "../math/rng";
 import type { Item } from "../items/types";
-import { diagnosisResult, nextDiagnosisItem, recordDiagnosisAnswer, startDiagnosis, MAX_ITEMS_BY_BAND, type DiagnosisAnswer } from "./engine";
+import { diagnosisResult, nextDiagnosisItem, recordDiagnosisAnswer, startDiagnosis, MAX_DIAGNOSIS_ITEMS, MAX_ITEMS_BY_BAND, type DiagnosisAnswer } from "./engine";
+import { domainOf } from "../curriculum/skills";
 import { gradeBandOf } from "../curriculum/types";
 
 interface SimStudent {
@@ -111,6 +112,25 @@ describe("adaptive diagnosis (simulation with 1,000 children)", () => {
     expect(avg(itemsByBand["1-2"])).toBeLessThanOrEqual(12);
     expect(avg(itemsByBand["3-4"])).toBeLessThanOrEqual(20);
     expect(avg(itemsByBand["5-6"])).toBeLessThanOrEqual(25);
+  });
+
+  it("diagnoses one domain at a time with that domain's item cap", () => {
+    const num = startDiagnosis({ grade: 4, semester: 2, seed: 3, now: 0, domain: "NUM_OPS" });
+    expect(num.domain).toBe("NUM_OPS");
+    expect(num.range.length).toBeGreaterThan(0);
+    expect(num.range.every((id) => domainOf(id) === "NUM_OPS")).toBe(true);
+    expect(num.maxItems).toBe(MAX_DIAGNOSIS_ITEMS.NUM_OPS["3-4"]);
+    // No skills in a domain (yet) means nothing to ask.
+    for (const domain of ["GEO_MEAS", "CHANGE", "DATA"] as const) {
+      const state = startDiagnosis({ grade: 4, semester: 2, seed: 3, now: 0, domain });
+      expect(state.range.every((id) => domainOf(id) === domain)).toBe(true);
+      expect(state.finished).toBe(state.range.length === 0);
+      expect(state.maxItems).toBe(MAX_DIAGNOSIS_ITEMS[domain]["3-4"]);
+    }
+    // States saved before domains existed are 수와 연산.
+    const legacy = { ...num };
+    delete legacy.domain;
+    expect(domainOf(nextDiagnosisItem(legacy).item!.skillId)).toBe("NUM_OPS");
   });
 
   it("finishes immediately in the first semester of grade 1", () => {

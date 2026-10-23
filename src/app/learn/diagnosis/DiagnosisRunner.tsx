@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { ButtonLink, Card } from "@/components/ui";
 import type { StudentAnswer } from "@/domain/items/types";
 import { diagnosisAnswer } from "../actions";
@@ -19,7 +20,7 @@ export function DiagnosisRunner({ initial, readAloud }: { initial: DiagnosisView
     const itemId = view.item.id;
     startTransition(async () => {
       try {
-        const r = await diagnosisAnswer(itemId, answer);
+        const r = await diagnosisAnswer(view.domain, itemId, answer);
         startTransition(() => {
           setView(r.view);
           setFeedback(r.feedback);
@@ -34,6 +35,9 @@ export function DiagnosisRunner({ initial, readAloud }: { initial: DiagnosisView
   const percent = Math.round(view.progress * 100);
   return (
     <div className="flex flex-col gap-4">
+      <p className="text-sm font-bold text-brand" data-testid="diagnosis-domain">
+        {view.domainName}
+      </p>
       <div className="flex items-center gap-3" aria-label={`진행 ${percent}%`}>
         <div className="h-3 flex-1 overflow-hidden rounded-full bg-brand-soft">
           <div className="h-full rounded-full bg-brand transition-all" style={{ width: `${Math.max(4, percent)}%` }} />
@@ -63,7 +67,7 @@ function DiagnosisDone({ view }: { view: Extract<DiagnosisView, { type: "done" }
         🎊
       </p>
       <h2 className="mt-3 text-2xl font-extrabold" data-testid="diagnosis-done">
-        실력 확인 끝!
+        {view.domainName} 실력 확인 끝!
       </h2>
       {view.skipped && view.asked === 0 ? (
         <p className="mt-2 text-muted">지금 학기에는 확인할 내용이 없어서 바로 첫 개념부터 시작해요.</p>
@@ -91,6 +95,13 @@ function DiagnosisDone({ view }: { view: Extract<DiagnosisView, { type: "done" }
           내 개념 지도 보기
         </ButtonLink>
       </div>
+      {view.next && (
+        <p className="mt-4 text-sm text-muted">
+          <Link href={`/learn/diagnosis?domain=${view.next.id}`} className="font-bold text-brand underline">
+            {view.next.name} 실력 확인도 해 볼까요?
+          </Link>
+        </p>
+      )}
     </Card>
   );
 }

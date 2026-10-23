@@ -43,14 +43,17 @@ async function Children() {
           <ButtonLink href="/parent/children/new">자녀 추가하기</ButtonLink>
         </Card>
       )}
-      {summaries.map(({ student, counts, week, nextSkills }) => (
+      {summaries.map(({ student, counts, week, nextSkills, domains, diagnosed }) => (
         <Card key={student.id}>
           <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
             <h2 className="text-xl font-extrabold">
               {student.nickname} <span className="text-base font-semibold text-muted">· {student.grade}학년 {student.semester}학기</span>
             </h2>
-            <span className={`rounded-full px-3 py-1 text-xs font-bold ${student.diagnosedAt ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"}`}>
-              {student.diagnosedAt ? "진단 완료" : "진단 전"}
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-bold ${diagnosed === domains.length ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"}`}
+              title={domains.map((d) => `${d.name}: ${d.diagnosedAt ? "진단 완료" : "진단 전"}`).join(", ")}
+            >
+              {diagnosed === 0 ? "진단 전" : diagnosed === domains.length ? "진단 완료" : `진단 ${diagnosed}/${domains.length} 영역`}
             </span>
           </div>
           <dl className="mb-4 grid grid-cols-2 gap-3 text-center sm:grid-cols-4">
@@ -64,7 +67,7 @@ async function Children() {
               함께 봐 주세요: 여러 번 시도해도 어려워하는 개념이 {counts.stuck}개 있어요.
             </p>
           )}
-          {student.diagnosedAt ? (
+          {diagnosed > 0 ? (
             nextSkills.length > 0 && (
               <p className="mb-4 text-sm">
                 <b>다음 학습:</b> {nextSkills.map((id) => getSkill(id).name).join(", ")}

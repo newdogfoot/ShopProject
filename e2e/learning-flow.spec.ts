@@ -56,7 +56,7 @@ test("guardian signup → diagnosis → learning → report", async ({ page }, t
   await page.getByRole("link", { name: "학습 화면 열기" }).click();
   await page.getByRole("button", { name: /별이/ }).click();
   await expect(page).toHaveURL(/\/learn\/home$/);
-  await page.getByRole("link", { name: "실력 확인 시작" }).click();
+  await page.getByRole("link", { name: "수와 연산 실력 확인 시작" }).click();
   await expect(page.getByTestId("item")).toBeVisible();
   await shot("02-diagnosis-item");
 
@@ -154,6 +154,8 @@ test("guardian signup → diagnosis → learning → report", async ({ page }, t
   await expect(page.getByText("진단 완료")).toBeVisible();
   await page.getByRole("link", { name: "리포트 보기" }).click();
   await expect(page.getByRole("heading", { name: /별이/ })).toBeVisible();
+  await expect(page.getByTestId("domain-summary")).toContainText("수와 연산");
+  await expect(page.getByTestId("domain-summary")).toContainText("익힌 개념");
   const problems = page.locator("dt", { hasText: "푼 문제" }).locator("xpath=following-sibling::dd");
   expect(Number(await problems.innerText())).toBeGreaterThan(10);
   await expect(page.locator('[data-skill^="FRAC_"]').first()).toBeVisible();

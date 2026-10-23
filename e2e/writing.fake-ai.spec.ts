@@ -11,7 +11,7 @@ test("grade 4 with AI: why?, a written explanation, and the guardian's check", a
   await signUp(page, uniqueEmail("write"));
   await addChild(page, { nickname: "글샘", grade: 4, semester: 2 });
   await chooseChild(page, "글샘");
-  await page.getByRole("link", { name: "실력 확인 시작" }).click();
+  await page.getByRole("link", { name: "수와 연산 실력 확인 시작" }).click();
   await runDiagnosis(page, (id) => (id.startsWith("FRAC_") ? "wrong" : "correct"));
 
   await page.goto("/learn/session");

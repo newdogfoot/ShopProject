@@ -169,6 +169,17 @@ describe("validators", () => {
     expect(looseAnswerMatches("1 1/2", { kind: "fraction", value: rat(3, 2), form: "reduced" })).toBe(true);
     expect(looseAnswerMatches("몫 12, 나머지 2", { kind: "quotient-remainder", quotient: 12, remainder: 2 })).toBe(true);
     expect(looseAnswerMatches("2.5 L", { kind: "decimal", value: rat(5, 2) })).toBe(true);
+    const hourMin = { kind: "units" as const, parts: [{ label: "시간", per: 60 }, { label: "분", per: 1 }], value: 130 };
+    expect(looseAnswerMatches("2시간 10분", hourMin)).toBe(true);
+    expect(looseAnswerMatches("130분이에요", hourMin)).toBe(true);
+    expect(looseAnswerMatches("2시간 20분", hourMin)).toBe(false);
+    const mCm = { kind: "units" as const, parts: [{ label: "m", per: 100 }, { label: "cm", per: 1 }], value: 105 };
+    expect(looseAnswerMatches("1 m 5 cm", mCm)).toBe(true);
+    expect(looseAnswerMatches("105cm", mCm)).toBe(true);
+    expect(looseAnswerMatches("1 m 15 mm", mCm)).toBe(false);
+    const clock = { kind: "units" as const, parts: [{ label: "시", per: 60 }, { label: "분", per: 1 }], value: 205 };
+    expect(looseAnswerMatches("3시 25분", clock)).toBe(true);
+    expect(looseAnswerMatches("3시간 25분", clock)).toBe(false);
     expect(hasBannedContent("바보처럼")).toBe(true);
     expect(hasBannedContent("사탕을 나누어요")).toBe(false);
   });

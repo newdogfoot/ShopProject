@@ -4,13 +4,51 @@
  */
 import { formatRational, rat, toDecimalString, type Rational } from "../math/rational";
 import { formatInt, withJosa } from "../math/korean";
-import type { AnswerSpec, BugSpec, CompareSymbol, FractionForm } from "./types";
+import type { AnswerSpec, BugSpec, CompareSymbol, FractionForm, UnitPart } from "./types";
 
-export const intAns = (value: number): AnswerSpec => ({ kind: "integer", value });
-export const decAns = (value: Rational): AnswerSpec => ({ kind: "decimal", value });
+export const intAns = (value: number, unit?: string): AnswerSpec => (unit ? { kind: "integer", value, unit } : { kind: "integer", value });
+export const decAns = (value: Rational, unit?: string): AnswerSpec => (unit ? { kind: "decimal", value, unit } : { kind: "decimal", value });
 export const fracAns = (value: Rational, form: FractionForm = "any"): AnswerSpec => ({ kind: "fraction", value, form });
 export const cmpAns = (value: CompareSymbol): AnswerSpec => ({ kind: "compare", value });
 export const qrAns = (quotient: number, remainder: number): AnswerSpec => ({ kind: "quotient-remainder", quotient, remainder });
+
+/** Unit sets for several-unit answers, largest unit first; values are counted in the last unit. */
+export const UNITS = {
+  /** A time of day on a clock: 3시 25분. */
+  clock: [{ label: "시", per: 60 }, { label: "분", per: 1 }],
+  hourMin: [{ label: "시간", per: 60 }, { label: "분", per: 1 }],
+  minSec: [{ label: "분", per: 60 }, { label: "초", per: 1 }],
+  hourMinSec: [{ label: "시간", per: 3600 }, { label: "분", per: 60 }, { label: "초", per: 1 }],
+  mCm: [{ label: "m", per: 100 }, { label: "cm", per: 1 }],
+  cmMm: [{ label: "cm", per: 10 }, { label: "mm", per: 1 }],
+  kmM: [{ label: "km", per: 1000 }, { label: "m", per: 1 }],
+  lMl: [{ label: "L", per: 1000 }, { label: "mL", per: 1 }],
+  kgG: [{ label: "kg", per: 1000 }, { label: "g", per: 1 }],
+} as const satisfies Record<string, readonly UnitPart[]>;
+
+export const unitsAns = (parts: readonly UnitPart[], value: number): AnswerSpec => ({ kind: "units", parts: parts.map((p) => ({ ...p })), value });
+
+/** Splits an amount in base units into the parts, largest first: (130, 시간·분) → [2, 10]. */
+export function splitUnits(value: number, parts: readonly UnitPart[]): number[] {
+  let rest = value;
+  return parts.map((p) => {
+    const n = Math.floor(rest / p.per);
+    rest -= n * p.per;
+    return n;
+  });
+}
+
+/** A number with its unit: "10분", "5 cm", "60°", "25%". */
+export function unitText(n: number | string, label: string): string {
+  return /^[가-힣°%]/.test(label) ? `${n}${label}` : `${n} ${label}`;
+}
+
+/** "2시간 10분", "1 m 5 cm"; zero parts are left out ("3시"), but nothing at all is "0분". */
+export function formatUnits(value: number, parts: readonly UnitPart[]): string {
+  const values = splitUnits(value, parts);
+  const shown = values.map((n, i) => unitText(n, parts[i].label)).filter((_, i) => values[i] !== 0);
+  return shown.length > 0 ? shown.join(" ") : unitText(0, parts[parts.length - 1].label);
+}
 
 export const SHORT_ANSWER_GUESS = 0.03;
 export const SMALL_RANGE_GUESS = 0.1;
@@ -152,6 +190,7 @@ export function sameValue(a: AnswerSpec, b: AnswerSpec): boolean {
     return sa.length === sb.length && sa.every((v, i) => v === sb[i]);
   }
   if (a.kind === "choice" && b.kind === "choice") return a.options[a.value] === b.options[b.value];
+  if (a.kind === "units" && b.kind === "units") return a.value === b.value;
   return false;
 }
 
@@ -171,9 +210,11 @@ export function numericValue(a: AnswerSpec): Rational | null {
 export function answerText(a: AnswerSpec): string {
   switch (a.kind) {
     case "integer":
-      return formatInt(a.value);
-    case "decimal":
-      return toDecimalString(a.value) ?? formatRational(a.value);
+      return a.unit ? unitText(formatInt(a.value), a.unit) : formatInt(a.value);
+    case "decimal": {
+      const text = toDecimalString(a.value) ?? formatRational(a.value);
+      return a.unit ? unitText(text, a.unit) : text;
+    }
     case "fraction":
       return formatRational(a.value, a.form === "improper" ? "fraction" : "mixed");
     case "quotient-remainder":
@@ -184,6 +225,8 @@ export function answerText(a: AnswerSpec): string {
       return [...a.values].sort((x, y) => x - y).join(", ");
     case "choice":
       return a.options[a.value];
+    case "units":
+      return formatUnits(a.value, a.parts);
     case "text":
       return a.model;
   }

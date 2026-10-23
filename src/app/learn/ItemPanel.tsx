@@ -50,7 +50,16 @@ export function ItemPanel({
         (item.answerKind === "text" ? (
           <TextAnswer key={item.id} maxLength={item.maxLength ?? 100} disabled={disabled} onSubmit={onSubmit} />
         ) : (
-          <Keypad key={item.id} kind={item.answerKind} form={item.fractionForm} options={item.options} disabled={disabled} onSubmit={onSubmit} />
+          <Keypad
+            key={item.id}
+            kind={item.answerKind}
+            form={item.fractionForm}
+            options={item.options}
+            units={item.units}
+            unit={item.unit}
+            disabled={disabled}
+            onSubmit={onSubmit}
+          />
         ))}
       {item.test && !hideKeypad && (
         // Test-only shortcuts (rendered only when E2E_TEST_MODE=1 on the server).

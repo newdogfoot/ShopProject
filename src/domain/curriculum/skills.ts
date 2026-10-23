@@ -9,16 +9,23 @@
  * - `standardArea` names the grade band and domain of the achievement standard;
  *   the exact standard numbers must still be checked against the official text.
  */
-import type { Skill, Strand, StrandId } from "./types";
+import type { Domain, DomainId, Skill, Strand, StrandId } from "./types";
+
+export const DOMAINS: Domain[] = [
+  { id: "NUM_OPS", name: "수와 연산", emoji: "🔢" },
+  { id: "CHANGE", name: "변화와 관계", emoji: "🔁" },
+  { id: "GEO_MEAS", name: "도형과 측정", emoji: "📐" },
+  { id: "DATA", name: "자료와 가능성", emoji: "📊" },
+];
 
 export const STRANDS: Strand[] = [
-  { id: "NUM", name: "수", emoji: "🔢" },
-  { id: "ADDSUB", name: "덧셈과 뺄셈", emoji: "➕" },
-  { id: "MUL", name: "곱셈", emoji: "✖️" },
-  { id: "DIV", name: "나눗셈", emoji: "➗" },
-  { id: "MIXED", name: "혼합 계산·약수와 배수", emoji: "🧮" },
-  { id: "FRAC", name: "분수", emoji: "🍕" },
-  { id: "DEC", name: "소수", emoji: "📏" },
+  { id: "NUM", name: "수", emoji: "🔢", domain: "NUM_OPS" },
+  { id: "ADDSUB", name: "덧셈과 뺄셈", emoji: "➕", domain: "NUM_OPS" },
+  { id: "MUL", name: "곱셈", emoji: "✖️", domain: "NUM_OPS" },
+  { id: "DIV", name: "나눗셈", emoji: "➗", domain: "NUM_OPS" },
+  { id: "MIXED", name: "혼합 계산·약수와 배수", emoji: "🧮", domain: "NUM_OPS" },
+  { id: "FRAC", name: "분수", emoji: "🍕", domain: "NUM_OPS" },
+  { id: "DEC", name: "소수", emoji: "📏", domain: "NUM_OPS" },
 ];
 
 const S12 = "[2수01-…]";
@@ -515,4 +522,32 @@ export function getStrand(id: StrandId): Strand {
 
 export function skillsInStrand(id: StrandId): Skill[] {
   return (SKILLS as readonly Skill[]).filter((s) => s.strand === id);
+}
+
+export function getDomain(id: DomainId): Domain {
+  const domain = DOMAINS.find((d) => d.id === id);
+  if (!domain) throw new Error(`unknown domain: ${id}`);
+  return domain;
+}
+
+export function isDomainId(id: string): id is DomainId {
+  return DOMAINS.some((d) => d.id === id);
+}
+
+/** The area of mathematics a skill belongs to. */
+export function domainOf(skillId: string): DomainId {
+  return getStrand(getSkill(skillId).strand).domain;
+}
+
+export function strandsInDomain(id: DomainId): Strand[] {
+  return STRANDS.filter((s) => s.domain === id);
+}
+
+export function skillsInDomain(id: DomainId): Skill[] {
+  return (SKILLS as readonly Skill[]).filter((s) => getStrand(s.strand).domain === id);
+}
+
+/** Domains that have skills (the app only shows these). */
+export function activeDomains(): Domain[] {
+  return DOMAINS.filter((d) => skillsInDomain(d.id).length > 0);
 }

@@ -16,6 +16,9 @@ import { reviewExplanation } from "../../actions";
 
 export const metadata: Metadata = { title: "학습 리포트" };
 
+/** Dates as Korean families read them ("10월 23일"), in Korean time whatever the server's zone. */
+const KOREAN_DATE = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", month: "long", day: "numeric" });
+
 export default function ChildReportPage(props: PageProps<"/parent/children/[id]">) {
   return (
     <PageShell title="학습 리포트" back={{ href: "/parent", label: "보호자 화면" }}>
@@ -61,7 +64,30 @@ async function Report({ params }: { params: Promise<{ id: string }> }) {
             <dd className="text-2xl font-extrabold">{summary.week.accuracy === null ? "–" : `${summary.week.accuracy}%`}</dd>
           </div>
         </dl>
-        {!student.diagnosedAt && <p className="mt-4 text-sm text-muted">아직 진단을 하지 않았어요. 학습 화면에서 첫 실력 확인을 시작하면 개념 지도가 채워져요.</p>}
+        {summary.diagnosed === 0 && <p className="mt-4 text-sm text-muted">아직 진단을 하지 않았어요. 학습 화면에서 첫 실력 확인을 시작하면 개념 지도가 채워져요.</p>}
+      </Card>
+
+      <Card>
+        <h3 className="mb-3 text-lg font-bold">영역별 진행</h3>
+        <ul className="flex flex-col gap-2" data-testid="domain-summary">
+          {summary.domains.map((d) => (
+            <li key={d.id} className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-brand-soft/40 px-3 py-2 text-sm">
+              <span className="font-bold">
+                <span aria-hidden>{d.emoji}</span> {d.name}
+              </span>
+              {d.diagnosedAt ? (
+                <span className="text-muted">
+                  익힌 개념 <b className="text-foreground">{d.mastered}</b>/{d.total}
+                  {d.learning > 0 && ` · 배우는 중 ${d.learning}`}
+                  {d.misconception > 0 && ` · 오개념 ${d.misconception}`}
+                  {` · 진단 ${KOREAN_DATE.format(d.diagnosedAt)}`}
+                </span>
+              ) : (
+                <span className="text-amber-800">진단 전 (학습 화면에서 시작할 수 있어요)</span>
+              )}
+            </li>
+          ))}
+        </ul>
       </Card>
 
       {stuck.length > 0 && (
@@ -189,7 +215,7 @@ async function Report({ params }: { params: Promise<{ id: string }> }) {
       )}
 
       <Card>
-        <h3 className="mb-3 text-lg font-bold">개념 지도 (수와 연산)</h3>
+        <h3 className="mb-3 text-lg font-bold">개념 지도</h3>
         <ConceptMap learner={summary.learner} grade={grade} semester={semester} audience="guardian" />
       </Card>
 

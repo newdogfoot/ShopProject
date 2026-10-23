@@ -8,7 +8,7 @@ import { getSkill } from "@/domain/curriculum/skills";
 import type { Grade, Semester } from "@/domain/curriculum/types";
 import type { PlanStepKind } from "@/domain/tutor/planner";
 import { STEP_LABEL } from "../views";
-import { homeData } from "../data";
+import { homeData, type DomainCard } from "../data";
 
 export const metadata: Metadata = { title: "오늘의 학습" };
 
@@ -24,12 +24,40 @@ export default function LearnHomePage() {
 
 const STEP_ICON: Record<PlanStepKind, string> = { review: "🔁", learn: "🧭", reinforce: "💪", challenge: "🏔️" };
 
+/** One row per domain still waiting for its first diagnosis. */
+function DomainChecks({ domains }: { domains: DomainCard[] }) {
+  return (
+    <ul className="flex flex-col gap-2">
+      {domains.map((d) => (
+        <li key={d.id}>
+          <Link
+            href={`/learn/diagnosis?domain=${d.id}`}
+            aria-label={`${d.name} ${d.inProgress ? "실력 확인 이어서 하기" : "실력 확인 시작"}`}
+            data-testid={`diagnose-${d.id}`}
+            className="flex items-center justify-between gap-3 rounded-2xl bg-brand-soft/50 px-4 py-3 text-left font-bold hover:bg-brand-soft"
+          >
+            <span className="flex items-center gap-2">
+              <span aria-hidden className="text-2xl">
+                {d.emoji}
+              </span>
+              {d.name}
+            </span>
+            <span className="rounded-full bg-brand px-3 py-1 text-sm text-white">{d.inProgress ? "실력 확인 이어서 하기" : "실력 확인 시작"}</span>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 async function Home() {
   const student = await requireStudent();
-  const { stars, plan, diagnosisInProgress, learningInProgress } = await homeData(student);
+  const { stars, plan, domains, learningInProgress } = await homeData(student);
   const grade = student.grade as Grade;
   const semester = student.semester as Semester;
   const emoji = THEMES.find((t) => t.id === student.theme)?.emoji ?? "🙂";
+  const waiting = domains.filter((d) => !d.diagnosed);
+  const anyDiagnosed = waiting.length < domains.length;
 
   return (
     <div className="flex flex-col gap-5">
@@ -41,7 +69,7 @@ async function Home() {
           <div>
             <h1 className="text-2xl font-extrabold">{student.nickname}, 안녕!</h1>
             <p className="text-sm text-muted">
-              {grade}학년 {semester}학기 · 수와 연산
+              {grade}학년 {semester}학기
             </p>
           </div>
         </div>
@@ -50,18 +78,19 @@ async function Home() {
         </p>
       </header>
 
-      {!student.diagnosedAt ? (
-        <Card className="text-center">
-          <p className="text-4xl" aria-hidden>
-            🔍
-          </p>
-          <h2 className="mt-2 text-xl font-extrabold">먼저 실력 확인을 해 볼까요?</h2>
-          <p className="mx-auto mt-2 max-w-md text-muted">
-            문제를 조금 풀면 무엇을 이미 알고 무엇부터 배우면 좋을지 찾아 줘요. 시험이 아니니까 편하게 풀어요. 중간에 그만둬도 이어서 할 수 있어요.
-          </p>
-          <ButtonLink href="/learn/diagnosis" className="mt-5">
-            {diagnosisInProgress ? "실력 확인 이어서 하기" : "실력 확인 시작"}
-          </ButtonLink>
+      {!anyDiagnosed ? (
+        <Card>
+          <div className="text-center">
+            <p className="text-4xl" aria-hidden>
+              🔍
+            </p>
+            <h2 className="mt-2 text-xl font-extrabold">먼저 실력 확인을 해 볼까요?</h2>
+            <p className="mx-auto mt-2 mb-5 max-w-md text-muted">
+              문제를 조금 풀면 무엇을 이미 알고 무엇부터 배우면 좋을지 찾아 줘요. 시험이 아니니까 편하게 풀어요. 중간에 그만둬도 이어서 할 수 있어요.
+              {domains.length > 1 && " 영역마다 따로 확인해요. 수와 연산부터 해 보면 좋아요."}
+            </p>
+          </div>
+          <DomainChecks domains={waiting} />
         </Card>
       ) : (
         <Card>
@@ -86,6 +115,14 @@ async function Home() {
           <ButtonLink href="/learn/session" className="w-full">
             {learningInProgress ? "이어서 하기" : "시작하기"}
           </ButtonLink>
+        </Card>
+      )}
+
+      {anyDiagnosed && waiting.length > 0 && (
+        <Card>
+          <h2 className="mb-1 text-lg font-extrabold">다른 영역도 확인해 볼까요?</h2>
+          <p className="mb-3 text-sm text-muted">확인한 영역은 오늘의 학습에 함께 들어가요.</p>
+          <DomainChecks domains={waiting} />
         </Card>
       )}
 

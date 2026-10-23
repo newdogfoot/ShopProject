@@ -5,8 +5,8 @@
  * as a mistake.
  */
 import { add, eq, fromDecimalString, gcd, rat, toDecimalString, type Rational } from "../math/rational";
-import { answerText, factorsOf } from "./helpers";
-import type { AnswerSpec, BugRule, BugSpec, FractionForm, Item, StudentAnswer } from "./types";
+import { answerText, factorsOf, splitUnits, unitText } from "./helpers";
+import type { AnswerSpec, BugRule, BugSpec, FractionForm, Item, StudentAnswer, UnitPart } from "./types";
 
 export type GradeStatus = "correct" | "form" | "wrong" | "invalid";
 
@@ -57,6 +57,43 @@ function parseFraction(input: { whole: string; num: string; den: string }): Pars
   const den = parseNatural(denText);
   if (num === null || den === null || den === 0) return null;
   return { whole, num, den, value: add(rat(whole), rat(num, den)) };
+}
+
+interface ParsedUnits {
+  values: number[];
+  total: number;
+  /** What the child wrote, empty boxes left out: "1시간 70분". */
+  shown: string;
+}
+
+/** Several-unit input: an empty box counts as 0, but at least one box must be filled. */
+function parseUnits(input: StudentAnswer, parts: UnitPart[]): ParsedUnits | null {
+  if (input.kind !== "units" || input.values.length !== parts.length) return null;
+  if (input.values.every((v) => clean(v) === "")) return null;
+  const values: number[] = [];
+  for (const v of input.values) {
+    const n = clean(v) === "" ? 0 : parseNatural(v);
+    if (n === null) return null;
+    values.push(n);
+  }
+  const total = values.reduce((s, n, i) => s + n * parts[i].per, 0);
+  if (!Number.isSafeInteger(total)) return null;
+  const shown = parts
+    .map((p, i) => (clean(input.values[i]) === "" ? null : unitText(values[i], p.label)))
+    .filter((x): x is string => x !== null)
+    .join(" ");
+  return { values, total, shown };
+}
+
+/** A smaller unit holding a whole larger one (75분 → 1시간 15분). */
+function unitsFormIssue(values: number[], parts: UnitPart[]): string | null {
+  for (let i = 1; i < parts.length; i++) {
+    const ratio = parts[i - 1].per / parts[i].per;
+    if (values[i] >= ratio) {
+      return `값은 맞았어요! ${unitText(ratio, parts[i].label)} = ${unitText(1, parts[i - 1].label)}처럼 큰 단위로 바꿔서 나타내 볼까요?`;
+    }
+  }
+  return null;
 }
 
 function parseIntegerList(text: string): number[] | null {
@@ -165,6 +202,8 @@ function matchesBug(bug: BugSpec, input: StudentAnswer): boolean {
     }
     case "choice":
       return input.kind === "choice" && parseNatural(input.index) === expected.value;
+    case "units":
+      return parseUnits(input, expected.parts)?.total === expected.value;
     case "text":
       return false;
   }
@@ -181,13 +220,15 @@ export function grade(item: Item, input: StudentAnswer): GradeResult {
     case "integer": {
       const v = studentValue(input);
       if (v === null) return { status: "invalid", shown: "" };
-      const shown = input.kind === "fraction" ? shownFraction(parseFraction(input)!) : toDecimalString(v) ?? "";
+      const text = input.kind === "fraction" ? shownFraction(parseFraction(input)!) : toDecimalString(v) ?? "";
+      const shown = spec.unit ? unitText(text, spec.unit) : text;
       return eq(v, rat(spec.value)) ? { status: "correct", shown } : wrong(item, input, shown);
     }
     case "decimal": {
       const v = studentValue(input);
       if (v === null) return { status: "invalid", shown: "" };
-      const shown = toDecimalString(v) ?? "";
+      const text = toDecimalString(v) ?? "";
+      const shown = spec.unit ? unitText(text, spec.unit) : text;
       return eq(v, spec.value) ? { status: "correct", shown } : wrong(item, input, shown);
     }
     case "fraction": {
@@ -230,6 +271,13 @@ export function grade(item: Item, input: StudentAnswer): GradeResult {
       if (index === null || index >= spec.options.length) return { status: "invalid", shown: "" };
       const shown = spec.options[index];
       return index === spec.value ? { status: "correct", shown } : wrong(item, input, shown);
+    }
+    case "units": {
+      const u = parseUnits(input, spec.parts);
+      if (!u) return { status: "invalid", shown: "" };
+      if (u.total !== spec.value) return wrong(item, input, u.shown);
+      const issue = unitsFormIssue(u.values, spec.parts);
+      return issue ? { status: "form", formMessage: issue, shown: u.shown } : { status: "correct", shown: u.shown };
     }
     case "text":
       // Written explanations are graded by the app against the rubric (see submitReasonResult).
@@ -287,6 +335,8 @@ export function answerToInput(spec: AnswerSpec): StudentAnswer {
       return { kind: "integer-list", text: spec.values.join(", ") };
     case "choice":
       return { kind: "choice", index: String(spec.value) };
+    case "units":
+      return { kind: "units", values: splitUnits(spec.value, spec.parts).map(String) };
     case "text":
       return { kind: "text", text: spec.model };
   }
@@ -309,6 +359,8 @@ export function wrongInput(spec: AnswerSpec): StudentAnswer {
       return { kind: "integer-list", text: spec.values.length > 1 ? spec.values.slice(0, -1).join(", ") : String((spec.values[0] ?? 0) + 1) };
     case "choice":
       return { kind: "choice", index: String((spec.value + 1) % spec.options.length) };
+    case "units":
+      return answerToInput({ ...spec, value: spec.value + 1 });
     case "text":
       return { kind: "text", text: "몰라요" };
   }

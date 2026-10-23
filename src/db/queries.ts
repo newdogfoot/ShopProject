@@ -6,9 +6,9 @@
 import { and, desc, eq, gt, gte, lt, sql } from "drizzle-orm";
 import { createHash, randomBytes } from "node:crypto";
 import type { Db } from "./client";
-import { aiCache, aiUsage, attempts, authSessions, consents, explanations, guardians, itemBank, learningSessions, skillStates, students } from "./schema";
+import { aiCache, aiUsage, attempts, authSessions, consents, diagnoses, explanations, guardians, itemBank, learningSessions, skillStates, students } from "./schema";
 import type { LearnerState, SkillState } from "@/domain/model/learner";
-import type { Grade, Semester } from "@/domain/curriculum/types";
+import type { DomainId, Grade, Semester } from "@/domain/curriculum/types";
 import type { Theme } from "@/domain/content/stories";
 
 export const CONSENT_VERSION = "2026-10-v1";
@@ -99,8 +99,20 @@ export async function updateStudent(db: Db, guardianId: string, studentId: strin
   return s ?? null;
 }
 
-export async function markDiagnosed(db: Db, studentId: string, at = new Date()) {
-  await db.update(students).set({ diagnosedAt: at }).where(eq(students.id, studentId));
+/** Records that the first diagnosis in a domain is done (a later one updates the date). */
+export async function markDiagnosed(db: Db, studentId: string, domain: DomainId, at = new Date()) {
+  await db
+    .insert(diagnoses)
+    .values({ studentId, domain, diagnosedAt: at })
+    .onConflictDoUpdate({ target: [diagnoses.studentId, diagnoses.domain], set: { diagnosedAt: at } });
+}
+
+/** When each domain was diagnosed (domains not diagnosed yet are missing). */
+export async function diagnosisRecord(db: Db, studentId: string): Promise<Partial<Record<DomainId, Date>>> {
+  const rows = await db.select().from(diagnoses).where(eq(diagnoses.studentId, studentId));
+  const out: Partial<Record<DomainId, Date>> = {};
+  for (const r of rows) out[r.domain] = r.diagnosedAt;
+  return out;
 }
 
 /** Deletes a child and everything recorded about them (cascades). */
@@ -139,18 +151,35 @@ export async function saveLearner(db: Db, studentId: string, before: LearnerStat
 
 // ── Sessions & attempts ─────────────────────────────────────
 
-export async function activeSession(db: Db, studentId: string, kind: "diagnosis" | "learning") {
+/** The open session of a kind; for diagnoses, pass the domain. */
+export async function activeSession(db: Db, studentId: string, kind: "diagnosis" | "learning", domain?: DomainId) {
   const rows = await db
     .select()
     .from(learningSessions)
-    .where(and(eq(learningSessions.studentId, studentId), eq(learningSessions.kind, kind), eq(learningSessions.status, "active")))
+    .where(
+      and(
+        eq(learningSessions.studentId, studentId),
+        eq(learningSessions.kind, kind),
+        eq(learningSessions.status, "active"),
+        domain ? eq(learningSessions.domain, domain) : undefined,
+      ),
+    )
     .orderBy(desc(learningSessions.startedAt))
     .limit(1);
   return rows.at(0) ?? null;
 }
 
-export async function createSession(db: Db, studentId: string, kind: "diagnosis" | "learning", state: unknown) {
-  const [row] = await db.insert(learningSessions).values({ studentId, kind, state }).returning();
+/** Domains with a diagnosis in progress. */
+export async function diagnosesInProgress(db: Db, studentId: string): Promise<DomainId[]> {
+  const rows = await db
+    .select({ domain: learningSessions.domain })
+    .from(learningSessions)
+    .where(and(eq(learningSessions.studentId, studentId), eq(learningSessions.kind, "diagnosis"), eq(learningSessions.status, "active")));
+  return [...new Set(rows.map((r) => r.domain ?? "NUM_OPS"))];
+}
+
+export async function createSession(db: Db, studentId: string, kind: "diagnosis" | "learning", state: unknown, domain?: DomainId) {
+  const [row] = await db.insert(learningSessions).values({ studentId, kind, state, domain: domain ?? null }).returning();
   return row;
 }
 

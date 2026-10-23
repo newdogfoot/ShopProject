@@ -6,6 +6,7 @@
 import { add, cmp, div, mul, rat, sub, toDecimalString, toRational, type Rational } from "../math/rational";
 import { parseKoreanNumber } from "../math/korean";
 import type { AnswerSpec, CompareSymbol, Expr } from "./types";
+import { ANGLE_KIND, LIKELIHOOD, TRIANGLE_BY_ANGLES, TRIANGLE_BY_SIDES } from "./labels";
 
 export type CheckValue =
   | { type: "number"; value: Rational }
@@ -37,6 +38,27 @@ function digitValue(n: number | Rational, digit: number): Rational {
   if (intIdx >= 0 && fracIdx < 0) return rat(digit * 10 ** (intPart.length - 1 - intIdx));
   if (fracIdx >= 0 && intIdx < 0) return rat(digit, 10 ** (fracIdx + 1));
   throw new Error(`digit ${digit} is not unique in ${text}`);
+}
+
+function angleKind(degrees: number): keyof typeof ANGLE_KIND {
+  if (!(degrees > 0 && degrees < 180)) throw new Error(`not an angle between 0 and 180: ${degrees}`);
+  return degrees < 90 ? "acute" : degrees === 90 ? "right" : "obtuse";
+}
+
+/** Shortest unit that the whole sequence repeats; it must show at least twice. */
+function repeatingUnit(items: string[]): number {
+  for (let p = 1; p <= items.length / 2; p++) {
+    if (items.every((x, i) => x === items[i % p])) return p;
+  }
+  throw new Error(`no repeating unit in ${items.join(",")}`);
+}
+
+function pick(labels: string[], values: number[], better: (a: number, b: number) => boolean): string {
+  if (labels.length !== values.length || labels.length === 0) throw new Error("labels and values differ");
+  let best = 0;
+  for (let i = 1; i < values.length; i++) if (better(values[i], values[best])) best = i;
+  if (values.some((v, i) => i !== best && v === values[best])) throw new Error("tie at the top");
+  return labels[best];
 }
 
 export function evaluateExpr(e: Expr): CheckValue {
@@ -85,6 +107,33 @@ export function evaluateExpr(e: Expr): CheckValue {
     }
     case "label":
       return { type: "label", value: e.value };
+    case "angle-kind":
+      return { type: "label", value: ANGLE_KIND[angleKind(e.degrees)] };
+    case "triangle-by-angles": {
+      if (e.angles.reduce((s, a) => s + a, 0) !== 180) throw new Error("angles of a triangle add up to 180");
+      const largest = Math.max(...e.angles);
+      return { type: "label", value: TRIANGLE_BY_ANGLES[angleKind(largest)] };
+    }
+    case "triangle-by-sides": {
+      const [a, b, c] = [...e.sides].sort((x, y) => x - y);
+      if (a + b <= c) throw new Error("not a triangle");
+      const equal = Number(a === b) + Number(b === c) + Number(a === c);
+      return { type: "label", value: equal === 3 ? TRIANGLE_BY_SIDES.equilateral : equal === 1 ? TRIANGLE_BY_SIDES.isosceles : TRIANGLE_BY_SIDES.scalene };
+    }
+    case "argmax":
+      return { type: "label", value: pick(e.labels, e.values, (a, b) => a > b) };
+    case "argmin":
+      return { type: "label", value: pick(e.labels, e.values, (a, b) => a < b) };
+    case "likelihood": {
+      const { favorable: f, total: t } = e;
+      if (!(t > 0 && f >= 0 && f <= t)) throw new Error("bad likelihood");
+      const index = f === 0 ? 0 : f === t ? 4 : 2 * f === t ? 2 : 2 * f < t ? 1 : 3;
+      return { type: "label", value: LIKELIHOOD[index] };
+    }
+    case "pattern-next": {
+      const unit = repeatingUnit(e.items);
+      return { type: "label", value: e.items[(e.items.length - 1 + (e.ahead ?? 1)) % unit] };
+    }
   }
 }
 
@@ -111,6 +160,8 @@ export function answerMatches(spec: AnswerSpec, v: CheckValue): boolean {
     case "choice":
       // Options may be shuffled, so compare the chosen option's text.
       return v.type === "label" && spec.options[spec.value] === v.value;
+    case "units":
+      return v.type === "number" && v.value.d === 1 && v.value.n === spec.value;
     case "text":
       return v.type === "label" && spec.model === v.value;
   }

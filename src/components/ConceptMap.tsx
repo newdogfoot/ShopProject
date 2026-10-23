@@ -1,8 +1,9 @@
-/** Concept map: one row per strand, skills in learning order, coloured by status. */
-import { getSkill, skillsInStrand, STRANDS } from "@/domain/curriculum/skills";
+/** Concept map: a tab per domain, one row per strand, skills in learning order, coloured by status. */
+import { activeDomains, getSkill, skillsInStrand, strandsInDomain } from "@/domain/curriculum/skills";
 import { learningRange, topologicalOrder } from "@/domain/curriculum/graph";
-import type { Grade, Semester } from "@/domain/curriculum/types";
+import type { DomainId, Grade, Semester } from "@/domain/curriculum/types";
 import { deriveStatus, getState, STATUS_LABEL, type LearnerState, type SkillStatus } from "@/domain/model/learner";
+import { DomainTabs } from "./DomainTabs";
 
 export type MapStatus = SkillStatus | "not-yet";
 
@@ -24,19 +25,30 @@ export function mapStatus(learner: LearnerState, skillId: string, grade: Grade, 
   return status;
 }
 
-export function ConceptMap({ learner, grade, semester, audience }: { learner: LearnerState; grade: Grade; semester: Semester; audience: "child" | "guardian" }) {
-  const order = topologicalOrder();
+type MapProps = { learner: LearnerState; grade: Grade; semester: Semester; audience: "child" | "guardian" };
+
+export function ConceptMap(props: MapProps) {
   const shown: MapStatus[] = ["mastered", "inferred", "shaky", "misconception", "gap", "unknown", "not-yet"];
+  const domains = activeDomains();
   return (
     <div className="flex flex-col gap-4">
       <ul className="flex flex-wrap gap-2 text-xs" aria-label="색깔 설명">
         {shown.map((s) => (
           <li key={s} className={`rounded-full px-2.5 py-1 ring-1 ${STATUS_STYLE[s].chip}`}>
-            {audience === "child" ? STATUS_STYLE[s].kid : STATUS_LABEL[s]}
+            {props.audience === "child" ? STATUS_STYLE[s].kid : STATUS_LABEL[s]}
           </li>
         ))}
       </ul>
-      {STRANDS.map((strand) => {
+      <DomainTabs tabs={domains.map((d) => ({ id: d.id, label: `${d.emoji} ${d.name}`, content: <DomainMap {...props} domain={d.id} /> }))} />
+    </div>
+  );
+}
+
+function DomainMap({ learner, grade, semester, audience, domain }: MapProps & { domain: DomainId }) {
+  const order = topologicalOrder();
+  return (
+    <div className="flex flex-col gap-4">
+      {strandsInDomain(domain).map((strand) => {
         const skills = skillsInStrand(strand.id).sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
         return (
           <section key={strand.id} aria-labelledby={`strand-${strand.id}`}>
