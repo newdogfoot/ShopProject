@@ -3,10 +3,10 @@
  * same code runs against PGlite in tests and PostgreSQL in production.
  * Functions that touch a child's data always check the guardian owns it.
  */
-import { and, desc, eq, gt, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, lt, sql } from "drizzle-orm";
 import { createHash, randomBytes } from "node:crypto";
 import type { Db } from "./client";
-import { aiCache, aiUsage, attempts, authSessions, consents, guardians, itemBank, learningSessions, skillStates, students } from "./schema";
+import { aiCache, aiUsage, attempts, authSessions, consents, explanations, guardians, itemBank, learningSessions, skillStates, students } from "./schema";
 import type { LearnerState, SkillState } from "@/domain/model/learner";
 import type { Grade, Semester } from "@/domain/curriculum/types";
 import type { Theme } from "@/domain/content/stories";
@@ -69,6 +69,7 @@ export interface StudentInput {
   semester: Semester;
   theme: Theme;
   readAloud: boolean;
+  allowWriting?: boolean;
 }
 
 export async function listStudents(db: Db, guardianId: string) {
@@ -173,10 +174,39 @@ export interface AttemptInput {
   misconceptionId: string | null;
   hintsUsed: number;
   ms: number;
+  errorType?: ErrorType | null;
 }
 
-export async function insertAttempt(db: Db, a: AttemptInput) {
-  await db.insert(attempts).values(a);
+/** Likely cause of a wrong answer. */
+export type ErrorType = "concept" | "procedure" | "careless" | "reading" | "unknown";
+
+/** Stores a first attempt and returns its id (to record how the item ended). */
+export async function insertAttempt(db: Db, a: AttemptInput): Promise<string> {
+  const [row] = await db.insert(attempts).values(a).returning({ id: attempts.id });
+  return row.id;
+}
+
+/** Fills in how a wrong first attempt ended. Scoped to the student, so ids from elsewhere do nothing. */
+export async function updateAttemptOutcome(db: Db, studentId: string, attemptId: string, o: { errorType: ErrorType | null; solvedAfterRetry: boolean }) {
+  await db
+    .update(attempts)
+    .set({ errorType: o.errorType, solvedAfterRetry: o.solvedAfterRetry })
+    .where(and(eq(attempts.id, attemptId), eq(attempts.studentId, studentId)));
+}
+
+/** Wrong first answers in learning (not diagnosis or "why" questions) since a date, counted by likely cause. */
+export async function errorTypeStats(db: Db, studentId: string, since: Date): Promise<Record<ErrorType, number>> {
+  const rows = await db
+    .select({ errorType: attempts.errorType, count: sql<number>`count(*)::int` })
+    .from(attempts)
+    .where(and(eq(attempts.studentId, studentId), eq(attempts.correct, false), gte(attempts.createdAt, since), sql`${attempts.purpose} not in ('reason', 'diagnosis')`))
+    .groupBy(attempts.errorType);
+  const out: Record<ErrorType, number> = { concept: 0, procedure: 0, careless: 0, reading: 0, unknown: 0 };
+  for (const r of rows) {
+    const key = (r.errorType ?? "unknown") as ErrorType;
+    out[key in out ? key : "unknown"] += r.count;
+  }
+  return out;
 }
 
 export async function recentAttempts(db: Db, studentId: string, limit = 50) {
@@ -236,4 +266,45 @@ export async function findBankedPrompt(db: Db, sourceItemId: string) {
 
 export async function bankPrompt(db: Db, row: { skillId: string; difficulty: number; theme: string; sourceItemId: string; prompt: string; model: string }) {
   await db.insert(itemBank).values(row).onConflictDoNothing();
+}
+
+// ── Written explanations ─────────────────────────────────
+
+export const EXPLANATION_KEEP_DAYS = 90;
+
+export interface ExplanationRow {
+  studentId: string;
+  skillId: string;
+  reasonId: string;
+  prompt: string;
+  text: string;
+  score: number | null;
+  confidence: "low" | "medium" | "high" | null;
+  feedback: string;
+}
+
+/** Stores a written explanation and deletes this child's explanations older than 90 days. */
+export async function insertExplanation(db: Db, e: ExplanationRow, now = new Date()): Promise<string> {
+  const cutoff = new Date(now.getTime() - EXPLANATION_KEEP_DAYS * 24 * 3600 * 1000);
+  await db.delete(explanations).where(and(eq(explanations.studentId, e.studentId), lt(explanations.createdAt, cutoff)));
+  const [row] = await db.insert(explanations).values({ ...e, createdAt: now }).returning({ id: explanations.id });
+  return row.id;
+}
+
+export async function listExplanations(db: Db, studentId: string, limit = 20) {
+  return db.select().from(explanations).where(eq(explanations.studentId, studentId)).orderBy(desc(explanations.createdAt)).limit(limit);
+}
+
+/** Records the guardian's check of an explanation; null if it does not belong to one of their children. */
+export async function setExplanationVerdict(db: Db, guardianId: string, explanationId: string, verdict: "ok" | "retry") {
+  const owned = await db
+    .select({ id: explanations.id, studentId: explanations.studentId, skillId: explanations.skillId, score: explanations.score, guardianVerdict: explanations.guardianVerdict })
+    .from(explanations)
+    .innerJoin(students, eq(students.id, explanations.studentId))
+    .where(and(eq(explanations.id, explanationId), eq(students.guardianId, guardianId)))
+    .limit(1);
+  const row = owned.at(0);
+  if (!row) return null;
+  await db.update(explanations).set({ guardianVerdict: verdict }).where(eq(explanations.id, explanationId));
+  return row;
 }

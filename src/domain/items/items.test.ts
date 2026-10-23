@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SKILLS } from "../curriculum/skills";
-import { generateItem, generateWordItem, GENERATORS } from "./index";
+import { generateItem, generateWordItem, GENERATORS, itemFromId } from "./index";
 import { answerMatches, evaluateExpr } from "./check";
 import { answerToInput, grade, wrongInput } from "./answer";
 import { sameValue } from "./helpers";
@@ -173,5 +173,23 @@ describe("grading", () => {
     const item = generateItem("AS_2D_BORROW_SUB", 7, 2);
     const smaller = item.bugs.find((b) => b.misconceptionId === "SUB_SMALLER_FROM_LARGER");
     expect(smaller).toBeDefined();
+  });
+});
+
+describe("items from ids", () => {
+  it("rebuilds computation and word problems from their ids", () => {
+    for (const s of SKILLS) {
+      const item = generateItem(s.id, 4242, 2);
+      expect(itemFromId(item.id), s.id).toEqual(item);
+    }
+    const word = generateWordItem("AS_2D_CARRY_ADD", 9, 2, "space");
+    expect(word.format).toBe("word");
+    expect(itemFromId(word.id)).toEqual(word);
+  });
+
+  it("refuses anything else", () => {
+    for (const bad of ["", "AS_2D_CARRY_ADD", "NOPE#2#1", "AS_2D_CARRY_ADD#4#1", "AS_2D_CARRY_ADD#2#1#w:pirate", "AS_2D_CARRY_ADD#2#1; drop", "AS_2D_CARRY_ADD#2#99999999999"]) {
+      expect(itemFromId(bad), bad).toBeNull();
+    }
   });
 });

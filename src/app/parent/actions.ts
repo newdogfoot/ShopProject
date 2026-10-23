@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
 import { z } from "zod";
 import { getDb } from "@/db/client";
-import { createStudent, deleteStudent, findGuardianByEmail, updateStudent } from "@/db/queries";
+import { createStudent, deleteStudent, findGuardianByEmail, loadLearner, saveLearner, setExplanationVerdict, updateStudent } from "@/db/queries";
+import { reviseReason } from "@/domain/model/learner";
 import { requireGuardian } from "@/auth/session";
 import { verifyPassword } from "@/auth/password";
 import { THEMES } from "@/domain/content/stories";
@@ -49,6 +50,7 @@ export async function createChild(_prev: ChildFormState, formData: FormData): Pr
     semester: semester as Semester,
     theme,
     readAloud: formData.get("readAloud") === "on",
+    allowWriting: formData.get("allowWriting") === "on",
   });
   redirect("/parent");
 }
@@ -65,6 +67,7 @@ export async function updateChild(_prev: ChildFormState, formData: FormData): Pr
     semester: semester as Semester,
     theme,
     readAloud: formData.get("readAloud") === "on",
+    allowWriting: formData.get("allowWriting") === "on",
   });
   if (!updated) return { error: "자녀 정보를 찾을 수 없어요." };
   refresh();
@@ -86,4 +89,25 @@ export async function deleteChild(_prev: ChildFormState, formData: FormData): Pr
   const ok = await deleteStudent(db, guardian.id, String(formData.get("id") ?? ""));
   if (!ok) return { error: "자녀 정보를 찾을 수 없어요." };
   redirect("/parent");
+}
+
+/** The guardian's check of a written explanation ("맞게 설명했어요" / "다시 설명이 필요해요"). */
+export async function reviewExplanation(formData: FormData): Promise<void> {
+  const guardian = await requireGuardian();
+  const id = String(formData.get("explanationId") ?? "");
+  const verdict = formData.get("verdict") === "ok" ? "ok" : "retry";
+  if (!/^[0-9a-f-]{36}$/.test(id)) return;
+  const db = await getDb();
+  const row = await setExplanationVerdict(db, guardian.id, id, verdict);
+  if (row && row.guardianVerdict !== verdict) {
+    const learner = await loadLearner(db, row.studentId);
+    const state = learner[row.skillId];
+    if (state) {
+      const counted = row.score !== null || row.guardianVerdict !== null;
+      const wasCorrect = row.guardianVerdict !== null ? row.guardianVerdict === "ok" : row.score === 2;
+      const updated = reviseReason(state, { counted, wasCorrect, nowCorrect: verdict === "ok", at: Date.now() });
+      await saveLearner(db, row.studentId, learner, { ...learner, [row.skillId]: updated });
+    }
+  }
+  refresh();
 }

@@ -1,7 +1,7 @@
 /** Summaries for the guardian dashboard and child report. */
 import "server-only";
 import type { Db } from "@/db/client";
-import { attemptStats, loadLearner, misconceptionExamples } from "@/db/queries";
+import { attemptStats, errorTypeStats, listExplanations, loadLearner, misconceptionExamples, type ErrorType } from "@/db/queries";
 import type { students } from "@/db/schema";
 import { getSkill } from "@/domain/curriculum/skills";
 import { learningRange } from "@/domain/curriculum/graph";
@@ -86,4 +86,45 @@ export function stuckReport(learner: LearnerState) {
   return Object.values(learner)
     .filter((s) => s.stuckCycles > 0 && deriveStatus(s) !== "mastered")
     .map((s) => ({ skillId: s.skillId, name: getSkill(s.skillId).name, tip: parentTipFor(s.skillId), cycles: s.stuckCycles }));
+}
+
+export const ERROR_LABEL: Record<ErrorType, string> = {
+  concept: "개념 이해(오개념)",
+  procedure: "계산 순서·방법",
+  careless: "단순 실수",
+  reading: "문제 이해",
+  unknown: "기타",
+};
+
+/** Wrong first answers in the last 7 days by likely cause. */
+export async function errorReport(db: Db, studentId: string, now = new Date()) {
+  const stats = await errorTypeStats(db, studentId, new Date(now.getTime() - 7 * 24 * 3600 * 1000));
+  const total = Object.values(stats).reduce((a, b) => a + b, 0);
+  return { total, rows: (Object.keys(ERROR_LABEL) as ErrorType[]).map((k) => ({ key: k, label: ERROR_LABEL[k], count: stats[k] })).filter((r) => r.count > 0) };
+}
+
+/** Recent written explanations; the ones the AI was unsure about (or could not grade) need a check. */
+export async function explanationReport(db: Db, studentId: string) {
+  const rows = await listExplanations(db, studentId, 10);
+  return rows.map((r) => ({
+    id: r.id,
+    skillName: getSkill(r.skillId).name,
+    prompt: r.prompt,
+    text: r.text,
+    score: r.score,
+    feedback: r.feedback,
+    verdict: r.guardianVerdict,
+    createdAt: r.createdAt,
+    needsCheck: r.guardianVerdict === null && (r.score === null || r.confidence === "low"),
+  }));
+}
+
+/** Skills the child can compute but whose "why" was not right yet. */
+export function reasonGapReport(learner: LearnerState) {
+  return Object.values(learner)
+    .filter((s) => s.reason && !s.reason.lastCorrect)
+    .map((s) => {
+      const m = s.reason?.misconceptionId ? getMisconception(s.reason.misconceptionId) : null;
+      return { skillId: s.skillId, name: getSkill(s.skillId).name, misconception: m ? { name: m.name, explain: m.parentExplain } : null, tip: parentTipFor(s.skillId) };
+    });
 }

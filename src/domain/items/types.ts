@@ -19,7 +19,14 @@ export type AnswerSpec =
   | { kind: "fraction"; value: Rational; form: FractionForm }
   | { kind: "quotient-remainder"; quotient: number; remainder: number }
   | { kind: "compare"; value: CompareSymbol }
-  | { kind: "integer-list"; values: number[] };
+  | { kind: "integer-list"; values: number[] }
+  /** Pick one of the options; `value` is the index of the right one. */
+  | { kind: "choice"; options: string[]; value: number }
+  /**
+   * A short written explanation. Code cannot grade it: the app grades it against
+   * the rubric (AI) and reports the result with `submitReasonResult`.
+   */
+  | { kind: "text"; rubric: string[]; model: string; maxLength: number };
 
 export type AnswerKind = AnswerSpec["kind"];
 
@@ -30,7 +37,9 @@ export type StudentAnswer =
   | { kind: "fraction"; whole: string; num: string; den: string }
   | { kind: "quotient-remainder"; quotient: string; remainder: string }
   | { kind: "compare"; value: string }
-  | { kind: "integer-list"; text: string };
+  | { kind: "integer-list"; text: string }
+  | { kind: "choice"; index: string }
+  | { kind: "text"; text: string };
 
 /** Rule-based wrong-answer patterns that a single value cannot describe. */
 export type BugRule =
@@ -84,7 +93,9 @@ export type Expr =
   | { k: "places"; terms: Array<[number, number]> }
   | { k: "digit-value"; n: number | Rational; digit: number }
   | { k: "max"; items: Expr[] }
-  | { k: "korean"; text: string };
+  | { k: "korean"; text: string }
+  /** A literal label (for choice and written answers; checked by content tests, not computed). */
+  | { k: "label"; value: string };
 
 /** Data for turning an item into a word problem (numbers stay the same). */
 export type StorySpec =
@@ -107,12 +118,18 @@ export type StorySpec =
 export type QuantityUnit = "L" | "kg" | "m";
 
 export interface Item {
-  /** `${skillId}#${difficulty}#${seed}` plus "#w" for word problems. */
+  /**
+   * `${skillId}#${difficulty}#${seed}`, plus `#w:${theme}` for word problems.
+   * Reason questions use `${skillId}#reason#${reasonId}#${seed}#${mode}`.
+   */
   id: string;
   skillId: string;
   difficulty: Difficulty;
   seed: number;
-  format: "computation" | "word";
+  /** "reason": a question about why a method works (pick the reason or write it). */
+  format: "computation" | "word" | "reason";
+  /** The reason question this item asks (reason items only). */
+  reasonId?: string;
   /** Problem text in math markup. */
   prompt: string;
   /** Extra instruction such as "기약분수로 나타내세요.". */

@@ -9,6 +9,7 @@ import { markupToSpeech } from "@/domain/math/markup";
 import type { StudentAnswer } from "@/domain/items/types";
 import { sessionAnswer, sessionContinue, sessionHint, sessionNext, sessionReveal, sessionStop } from "../actions";
 import { ErrorNote, FeedbackBox, ItemPanel, NETWORK_ERROR } from "../ItemPanel";
+import { WhyButton } from "../WhyButton";
 import type { SessionView } from "../views";
 
 type Run = (call: () => Promise<SessionView>) => void;
@@ -124,8 +125,9 @@ function WorkedScreen({ view, pending, run }: { view: Extract<SessionView, { typ
         )}
         <ol className="mt-3 flex list-inside list-decimal flex-col gap-1.5 text-lg">
           {view.example.steps.map((s, i) => (
-            <li key={i}>
+            <li key={`${view.example.id}-${i}`}>
               <MathText text={s} />
+              <WhyButton itemId={view.example.id} stepIndex={i} />
             </li>
           ))}
         </ol>
@@ -137,8 +139,9 @@ function WorkedScreen({ view, pending, run }: { view: Extract<SessionView, { typ
         </p>
         <ol className="mt-3 flex list-inside list-decimal flex-col gap-1.5 text-lg">
           {view.faded.steps.map((s, i) => (
-            <li key={i}>
+            <li key={`${view.faded.id}-${i}`}>
               <MathText text={s} />
+              <WhyButton itemId={view.faded.id} stepIndex={i} />
             </li>
           ))}
           <li>
@@ -198,7 +201,7 @@ function ItemScreen({ view, pending, run, readAloud }: { view: Extract<SessionVi
           </p>
         </div>
       )}
-      {view.feedback && <FeedbackBox feedback={view.feedback} />}
+      {view.feedback && <FeedbackBox feedback={view.feedback} whyItemId={view.canAskWhy ? view.item.id : undefined} />}
       <div className="flex flex-wrap justify-center gap-2">
         {view.canHint && (
           <button

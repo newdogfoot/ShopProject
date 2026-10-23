@@ -1,6 +1,6 @@
 /** Item generation entry point: reproducible problems from (skill, difficulty, seed). */
 import { createRng, deriveSeed } from "../math/rng";
-import { renderStory, type Theme } from "../content/stories";
+import { isTheme, renderStory, type Theme } from "../content/stories";
 import type { SkillId } from "../curriculum/skills";
 import type { Difficulty, Item } from "./types";
 import type { Generator } from "./generators/number";
@@ -123,6 +123,20 @@ export function generateWordItem(skillId: string, seed: number, difficulty: Diff
     if (item.format === "word") return item;
   }
   return generateItem(skillId, seed, difficulty);
+}
+
+/**
+ * Rebuilds a computation or word-problem item from its id (ids encode skill,
+ * difficulty, seed and theme). Returns null for anything that is not such an id.
+ */
+export function itemFromId(id: string): Item | null {
+  const m = /^([A-Z0-9_]+)#([123])#(\d{1,10})(?:#w:([a-z]+))?$/.exec(id);
+  if (!m) return null;
+  const [, skillId, d, seedText, theme] = m;
+  if (!(skillId in GENERATORS)) return null;
+  if (theme !== undefined && !isTheme(theme)) return null;
+  const item = generateItem(skillId, Number(seedText), Number(d) as Difficulty, theme ? { word: true, theme } : {});
+  return item.id === id ? item : null;
 }
 
 export type { Item, Difficulty } from "./types";

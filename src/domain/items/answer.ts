@@ -163,6 +163,10 @@ function matchesBug(bug: BugSpec, input: StudentAnswer): boolean {
       const b = [...new Set(expected.values)].sort((x, y) => x - y);
       return a.length === b.length && a.every((x, i) => x === b[i]);
     }
+    case "choice":
+      return input.kind === "choice" && parseNatural(input.index) === expected.value;
+    case "text":
+      return false;
   }
 }
 
@@ -220,6 +224,16 @@ export function grade(item: Item, input: StudentAnswer): GradeResult {
       const ok = a.length === b.length && a.every((x, i) => x === b[i]);
       return ok ? { status: "correct", shown } : wrong(item, input, shown);
     }
+    case "choice": {
+      if (input.kind !== "choice") return { status: "invalid", shown: "" };
+      const index = parseNatural(input.index);
+      if (index === null || index >= spec.options.length) return { status: "invalid", shown: "" };
+      const shown = spec.options[index];
+      return index === spec.value ? { status: "correct", shown } : wrong(item, input, shown);
+    }
+    case "text":
+      // Written explanations are graded by the app against the rubric (see submitReasonResult).
+      return { status: "invalid", shown: input.kind === "text" ? input.text.trim() : "" };
   }
 }
 
@@ -271,6 +285,10 @@ export function answerToInput(spec: AnswerSpec): StudentAnswer {
       return { kind: "compare", value: spec.value };
     case "integer-list":
       return { kind: "integer-list", text: spec.values.join(", ") };
+    case "choice":
+      return { kind: "choice", index: String(spec.value) };
+    case "text":
+      return { kind: "text", text: spec.model };
   }
 }
 
@@ -289,5 +307,9 @@ export function wrongInput(spec: AnswerSpec): StudentAnswer {
       return { kind: "compare", value: spec.value === "<" ? ">" : "<" };
     case "integer-list":
       return { kind: "integer-list", text: spec.values.length > 1 ? spec.values.slice(0, -1).join(", ") : String((spec.values[0] ?? 0) + 1) };
+    case "choice":
+      return { kind: "choice", index: String((spec.value + 1) % spec.options.length) };
+    case "text":
+      return { kind: "text", text: "몰라요" };
   }
 }

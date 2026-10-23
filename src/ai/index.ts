@@ -3,10 +3,16 @@ import "server-only";
 import { getDb } from "@/db/client";
 import { bankPrompt, findBankedPrompt, getAiCache, recordAiUsage, setAiCache } from "@/db/queries";
 import { createAnthropicCaller, DEFAULT_MODEL } from "./anthropic";
+import { createFakeCaller } from "./fake";
 import type { AiDeps, AiStore, StructuredCaller, StructuredRequest, StructuredResult } from "./types";
 
+/** Test-only fake AI (AI_FAKE=1, end-to-end tests). Never set it in production. */
+export function aiFake(): boolean {
+  return process.env.AI_FAKE === "1";
+}
+
 export function aiEnabled(): boolean {
-  return process.env.AI_ENABLED !== "false" && Boolean(process.env.ANTHROPIC_API_KEY);
+  return aiFake() || (process.env.AI_ENABLED !== "false" && Boolean(process.env.ANTHROPIC_API_KEY));
 }
 
 export function aiModel(): string {
@@ -17,7 +23,7 @@ const globalForAi = globalThis as unknown as { __aiCaller?: StructuredCaller; __
 
 function caller(): StructuredCaller | null {
   if (!aiEnabled()) return null;
-  globalForAi.__aiCaller ??= createAnthropicCaller({ apiKey: process.env.ANTHROPIC_API_KEY!, model: aiModel() });
+  globalForAi.__aiCaller ??= aiFake() ? createFakeCaller() : createAnthropicCaller({ apiKey: process.env.ANTHROPIC_API_KEY!, model: aiModel() });
   return globalForAi.__aiCaller;
 }
 

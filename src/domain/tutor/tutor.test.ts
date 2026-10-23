@@ -1,11 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { completeExplain, completeWorked, currentStep, recordCycleAnswer, startCycle, type CycleState } from "./cycle";
 import { buildPlan, learnableSkills } from "./planner";
-import { advance, explanationExample, finishExplain, finishWorked, nextItem, requestHint, startSession, submitAnswer, upcomingExplanations, type SessionState } from "./session";
-import { BKT, deriveStatus, emptySkillState, getState, markMastered, type LearnerState } from "../model/learner";
+import {
+  advance,
+  explanationExample,
+  finishExplain,
+  finishWorked,
+  nextItem,
+  requestHint,
+  startSession,
+  submitAnswer,
+  submitReasonResult,
+  upcomingExplanations,
+  type SessionState,
+} from "./session";
+import { BKT, deriveStatus, emptySkillState, getState, markMastered, recordReason, reviseReason, type LearnerState } from "../model/learner";
+import type { ReasonMode } from "../items/reason";
 import { diagnosisRange, learningRange } from "../curriculum/graph";
-import { answerToInput } from "../items/answer";
-import type { StudentAnswer, AnswerSpec } from "../items/types";
+import { answerToInput, wrongInput } from "../items/answer";
+import type { StudentAnswer } from "../items/types";
 
 const clean = { clean: true, p: 0.95 };
 const miss = { clean: false, p: 0.3 };
@@ -141,22 +154,6 @@ describe("planner", () => {
   });
 });
 
-function wrongInput(spec: AnswerSpec): StudentAnswer {
-  switch (spec.kind) {
-    case "integer":
-      return { kind: "integer", text: String(spec.value + 1) };
-    case "decimal":
-      return { kind: "decimal", text: "9999" };
-    case "fraction":
-      return { kind: "fraction", whole: "99", num: "", den: "" };
-    case "quotient-remainder":
-      return { kind: "quotient-remainder", quotient: String(spec.quotient + 1), remainder: "0" };
-    case "compare":
-      return { kind: "compare", value: spec.value === "<" ? ">" : "<" };
-    case "integer-list":
-      return { kind: "integer-list", text: "999" };
-  }
-}
 
 /** Plays a session with a child who answers correctly with probability `accuracy`. */
 function playSession(learner0: LearnerState, accuracy: number, grade: 1 | 2 | 3 | 4 | 5 | 6 = 3) {
@@ -257,5 +254,111 @@ describe("explanation warm-up", () => {
   it("gives the picture explanation an example with a picture when the skill has one", () => {
     // Three-digit numbers only come with base-ten blocks at the easiest difficulty.
     for (let seed = 1; seed <= 20; seed++) expect(explanationExample(seed, "NUM_3DIGIT", 1, "concrete").visual).toBeDefined();
+  });
+});
+
+describe("why questions", () => {
+  it("asks why after the mastery check in learn mode, then ends as mastered either way", () => {
+    let c = startCycle("FRAC_DIFF_DEN_ADD", "learn", { confirmed: true, misconceptionId: null, canWord: true, hasReason: true });
+    c = toPractice(c);
+    for (let i = 0; i < 4; i++) c = recordCycleAnswer(c, clean);
+    for (let i = 0; i < 3; i++) c = recordCycleAnswer(c, clean);
+    expect(currentStep(c)).toMatchObject({ kind: "item", purpose: "reason", hintsAllowed: false });
+    c = recordCycleAnswer(c, miss);
+    expect(c.outcome).toBe("mastered");
+  });
+
+  it("skips the why step for skills without why questions and in reinforcement", () => {
+    let c = startCycle("NUM_UPTO9", "learn", { confirmed: true, misconceptionId: null, canWord: false, hasReason: false });
+    c = toPractice(c);
+    for (let i = 0; i < 7; i++) c = recordCycleAnswer(c, clean);
+    expect(c.outcome).toBe("mastered");
+    let r = startCycle("FRAC_DIFF_DEN_ADD", "reinforce", { confirmed: true, misconceptionId: null, canWord: true, hasReason: true });
+    for (let i = 0; i < 3; i++) r = recordCycleAnswer(r, clean);
+    expect(r.outcome).toBe("mastered");
+  });
+
+  it("asks why in a review when chosen", () => {
+    const c = startCycle("FRAC_DIFF_DEN_ADD", "review", { confirmed: true, misconceptionId: null, canWord: true, hasReason: true, reasonReview: true });
+    expect(currentStep(c)).toMatchObject({ kind: "item", purpose: "reason" });
+    expect(recordCycleAnswer(c, clean).outcome).toBe("review-ok");
+  });
+
+  it("records reasons apart from mastery; a misconception repeated at review re-opens the skill", () => {
+    const s0 = { ...emptySkillState("FRAC_DIFF_DEN_ADD"), evidence: "direct" as const, p: 0.95, attempts: 8, correct: 8 };
+    const s1 = recordReason(s0, { correct: false, misconceptionId: "FRAC_ADD_DENOMINATORS", at: 1, review: false });
+    expect(s1.p).toBe(0.95);
+    expect(s1.reason).toMatchObject({ asked: 1, correct: 0, lastCorrect: false, misconceptionId: "FRAC_ADD_DENOMINATORS" });
+    expect(deriveStatus(s1)).toBe("mastered");
+    const s2 = recordReason(s1, { correct: false, misconceptionId: "FRAC_ADD_DENOMINATORS", at: 2, review: true });
+    expect(s2.p).toBeLessThan(BKT.mastery);
+    expect(deriveStatus(s2)).toBe("misconception");
+    const s3 = recordReason(s2, { correct: true, at: 3, review: true });
+    expect(s3.reason).toMatchObject({ asked: 3, correct: 1, lastCorrect: true, misconceptionId: null });
+  });
+
+  it("applies a guardian's check of a written explanation", () => {
+    const partly = { ...emptySkillState("FRAC_EQUIV"), reason: { asked: 1, correct: 0, lastCorrect: false, lastAt: 1, misconceptionId: null } };
+    expect(reviseReason(partly, { counted: true, wasCorrect: false, nowCorrect: true, at: 2 }).reason).toMatchObject({ asked: 1, correct: 1, lastCorrect: true });
+    const ungraded = emptySkillState("FRAC_EQUIV");
+    expect(reviseReason(ungraded, { counted: false, wasCorrect: false, nowCorrect: true, at: 2 }).reason).toMatchObject({ asked: 1, correct: 1 });
+    const good = { ...emptySkillState("FRAC_EQUIV"), reason: { asked: 1, correct: 1, lastCorrect: true, lastAt: 1, misconceptionId: null } };
+    expect(reviseReason(good, { counted: true, wasCorrect: true, nowCorrect: false, at: 2 }).reason).toMatchObject({ asked: 1, correct: 0, lastCorrect: false });
+  });
+
+  /** A grade-5 child who only lacks unlike-denominator addition. */
+  function fractionLearner(now: number): LearnerState {
+    const learner = masteredLearner(diagnosisRange(5, 2).filter((id) => id !== "FRAC_DIFF_DEN_ADD" && id !== "FRAC_DIFF_DEN_SUB"), now - 86400_000);
+    learner["FRAC_DIFF_DEN_ADD"] = { ...emptySkillState("FRAC_DIFF_DEN_ADD"), evidence: "direct", p: 0.05, attempts: 2 };
+    return learner;
+  }
+
+  function playUntilReason(mode: ReasonMode) {
+    const now = Date.UTC(2026, 9, 23, 9);
+    let learner = fractionLearner(now);
+    let state = startSession({ learner, grade: 5, semester: 2, theme: "space", seed: 11, now, budgetMs: 60 * 60_000, reasonMode: mode });
+    for (let guard = 0; guard < 200; guard++) {
+      const r = advance(state, learner, now);
+      state = r.state;
+      learner = r.learner;
+      if (r.screen.type === "summary") break;
+      if (r.screen.type === "explain") state = finishExplain(state);
+      else if (r.screen.type === "worked") state = finishWorked(state);
+      else {
+        const active = r.screen.active;
+        if (active.purpose === "reason") return { state, learner, active, now };
+        const out = submitAnswer(state, learner, answerToInput(active.item.answer), now);
+        state = nextItem(out.state);
+        learner = out.learner;
+      }
+    }
+    throw new Error("no why question came up");
+  }
+
+  it("asks a pick-one why question in a session and keeps it out of the mastery probability", () => {
+    const { state, learner, active, now } = playUntilReason("choice");
+    expect(active.item.answer.kind).toBe("choice");
+    const before = getState(learner, "FRAC_DIFF_DEN_ADD").p;
+    const bug = active.item.bugs[0];
+    const out = submitAnswer(state, learner, answerToInput(bug.answer!), now);
+    expect(out.feedback).toMatchObject({ status: "wrong", done: true });
+    const after = getState(out.learner, "FRAC_DIFF_DEN_ADD");
+    expect(after.p).toBe(before);
+    expect(after.reason).toMatchObject({ asked: 1, lastCorrect: false, misconceptionId: bug.misconceptionId });
+    // The cycle still ends as mastered.
+    const next = advance(nextItem(out.state), out.learner, now);
+    expect(deriveStatus(getState(next.learner, "FRAC_DIFF_DEN_ADD"))).toBe("mastered");
+  });
+
+  it("takes written why answers only through submitReasonResult", () => {
+    const { state, learner, active, now } = playUntilReason("write");
+    expect(active.item.answer.kind).toBe("text");
+    expect(() => submitAnswer(state, learner, { kind: "text", text: "분모가 달라요" }, now)).toThrow();
+    const ungraded = submitReasonResult(state, learner, { text: "분모가 달라서 통분해요", score: null, feedback: "확인 중" }, now);
+    expect(getState(ungraded.learner, "FRAC_DIFF_DEN_ADD").reason).toBeUndefined();
+    expect(ungraded.state.active?.written?.score).toBeNull();
+    const graded = submitReasonResult(state, learner, { text: "분모가 다르면 조각 크기가 달라서 통분해요", score: 2, feedback: "좋아요" }, now);
+    expect(getState(graded.learner, "FRAC_DIFF_DEN_ADD").reason).toMatchObject({ asked: 1, correct: 1, lastCorrect: true });
+    expect(graded.state.active?.done).toBe(true);
   });
 });

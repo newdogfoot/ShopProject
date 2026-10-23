@@ -11,7 +11,8 @@ export type CheckValue =
   | { type: "number"; value: Rational }
   | { type: "compare"; value: CompareSymbol }
   | { type: "divmod"; q: number; r: number }
-  | { type: "list"; values: number[] };
+  | { type: "list"; values: number[] }
+  | { type: "label"; value: string };
 
 function bruteGcd(a: number, b: number): number {
   for (let g = Math.min(a, b); g >= 1; g--) if (a % g === 0 && b % g === 0) return g;
@@ -82,6 +83,8 @@ export function evaluateExpr(e: Expr): CheckValue {
       const values = e.items.map(numberOf);
       return { type: "number", value: values.reduce((m, v) => (cmp(v, m) > 0 ? v : m)) };
     }
+    case "label":
+      return { type: "label", value: e.value };
   }
 }
 
@@ -105,5 +108,10 @@ export function answerMatches(spec: AnswerSpec, v: CheckValue): boolean {
       );
     case "integer-list":
       return v.type === "list" && v.values.length === spec.values.length && v.values.every((x, i) => x === [...spec.values].sort((a, b) => a - b)[i]);
+    case "choice":
+      // Options may be shuffled, so compare the chosen option's text.
+      return v.type === "label" && spec.options[spec.value] === v.value;
+    case "text":
+      return v.type === "label" && spec.model === v.value;
   }
 }

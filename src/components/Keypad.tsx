@@ -2,6 +2,7 @@
 
 import { useEffect, useEffectEvent, useReducer } from "react";
 import type { AnswerKind, FractionForm, StudentAnswer } from "@/domain/items/types";
+import { MathText } from "./MathText";
 
 type Field = "text" | "whole" | "num" | "den" | "quotient" | "remainder";
 
@@ -9,6 +10,8 @@ interface State {
   fields: Record<Field, string>;
   focus: Field;
   compare: string;
+  /** Picked option index (choice answers). */
+  choice: string;
 }
 
 type Action =
@@ -17,7 +20,8 @@ type Action =
   | { type: "back" }
   | { type: "focus"; f: Field }
   | { type: "next" }
-  | { type: "compare"; v: string };
+  | { type: "compare"; v: string }
+  | { type: "choice"; v: string };
 
 const MAX_LEN = 13;
 
@@ -38,6 +42,7 @@ function init(args: { kind: AnswerKind; form?: FractionForm }): State {
     fields: { text: "", whole: "", num: "", den: "", quotient: "", remainder: "" },
     focus: initialFocus(args.kind, args.form),
     compare: "",
+    choice: "",
   };
 }
 
@@ -73,6 +78,8 @@ function makeReducer(kind: AnswerKind, form?: FractionForm) {
       }
       case "compare":
         return { ...s, compare: a.v };
+      case "choice":
+        return { ...s, choice: a.v };
     }
   };
 }
@@ -93,6 +100,11 @@ function toAnswer(kind: AnswerKind, s: State): StudentAnswer | null {
       return s.compare ? { kind, value: s.compare } : null;
     case "integer-list":
       return f.text ? { kind, text: f.text } : null;
+    case "choice":
+      return s.choice ? { kind, index: s.choice } : null;
+    case "text":
+      // Written answers use TextAnswer, not the keypad.
+      return null;
   }
 }
 
@@ -114,12 +126,15 @@ function Box({ value, active, label, onClick, wide }: { value: string; active: b
 export function Keypad({
   kind,
   form,
+  options = [],
   disabled,
   onSubmit,
   submitLabel = "확인",
 }: {
   kind: AnswerKind;
   form?: FractionForm;
+  /** Options for choice answers. */
+  options?: string[];
   disabled?: boolean;
   onSubmit: (answer: StudentAnswer) => void;
   submitLabel?: string;
@@ -133,6 +148,15 @@ export function Keypad({
   // Physical keyboard: digits, backspace, enter, "." / "," and "/" (next box).
   const onKey = useEffectEvent((e: KeyboardEvent) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+    if (kind === "choice") {
+      const n = Number(e.key);
+      if (Number.isInteger(n) && n >= 1 && n <= options.length) dispatch({ type: "choice", v: String(n - 1) });
+      else if (e.key === "Enter") {
+        e.preventDefault();
+        submit();
+      }
+      return;
+    }
     if (/^[0-9]$/.test(e.key)) dispatch({ type: "digit", d: e.key });
     else if (e.key === "Backspace") dispatch({ type: "back" });
     else if (e.key === "Enter") {
@@ -207,8 +231,34 @@ export function Keypad({
             ))}
           </div>
         );
+      case "choice":
+        return (
+          <div className="flex flex-col gap-2" role="radiogroup" aria-label="보기">
+            {options.map((text, i) => (
+              <button
+                key={i}
+                type="button"
+                role="radio"
+                aria-checked={state.choice === String(i)}
+                disabled={disabled}
+                onClick={() => dispatch({ type: "choice", v: String(i) })}
+                data-testid={`option-${i}`}
+                className={`flex items-start gap-3 rounded-2xl border-4 p-3 text-left text-lg leading-snug transition ${
+                  state.choice === String(i) ? "border-brand bg-brand-soft" : "border-brand/20 bg-white"
+                }`}
+              >
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-base font-black ${state.choice === String(i) ? "bg-brand text-white" : "bg-brand-soft text-brand"}`}>
+                  {i + 1}
+                </span>
+                <span className="flex-1">
+                  <MathText text={text} />
+                </span>
+              </button>
+            ))}
+          </div>
+        );
       default:
-        return <div className="flex justify-center">{box("text", kind === "integer-list" ? "답" : "답", true)}</div>;
+        return <div className="flex justify-center">{box("text", "답", true)}</div>;
     }
   })();
 
@@ -218,7 +268,7 @@ export function Keypad({
   return (
     <div className="flex flex-col gap-4">
       {display}
-      {kind !== "compare" && (
+      {kind !== "compare" && kind !== "choice" && (
         <div className="mx-auto grid w-full max-w-xs grid-cols-3 gap-2">
           {keys.map((k) => (
             <button

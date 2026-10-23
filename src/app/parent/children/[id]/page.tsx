@@ -10,8 +10,9 @@ import { getStudent } from "@/db/queries";
 import { getSkill } from "@/domain/curriculum/skills";
 import type { Grade, Semester } from "@/domain/curriculum/types";
 import { aiEnabled } from "@/ai";
-import { childSummary, misconceptionReport, stuckReport } from "../../data";
+import { childSummary, errorReport, explanationReport, misconceptionReport, reasonGapReport, stuckReport } from "../../data";
 import { DeleteChildForm, EditChildForm } from "../../ChildForms";
+import { reviewExplanation } from "../../actions";
 
 export const metadata: Metadata = { title: "학습 리포트" };
 
@@ -35,6 +36,8 @@ async function Report({ params }: { params: Promise<{ id: string }> }) {
   const summary = await childSummary(db, student);
   const misconceptions = await misconceptionReport(db, student.id, summary.learner);
   const stuck = stuckReport(summary.learner);
+  const [errors, written] = await Promise.all([errorReport(db, student.id), explanationReport(db, student.id)]);
+  const reasonGaps = reasonGapReport(summary.learner);
   const grade = student.grade as Grade;
   const semester = student.semester as Semester;
 
@@ -98,6 +101,80 @@ async function Report({ params }: { params: Promise<{ id: string }> }) {
         </Card>
       )}
 
+      {errors.total > 0 && (
+        <Card>
+          <h3 className="mb-1 text-lg font-bold">틀린 문제 원인 (최근 7일)</h3>
+          <p className="mb-3 text-xs text-muted">처음 답이 틀린 {errors.total}문제를 원인별로 나눴어요. 대표 오답과 같으면 오개념, 힌트 없이 바로 고치면 단순 실수로 봐요.</p>
+          <ul className="flex flex-col gap-2" data-testid="error-causes">
+            {errors.rows.map((r) => (
+              <li key={r.key} className="flex items-center gap-3 text-sm">
+                <span className="w-28 shrink-0">{r.label}</span>
+                <span className="h-3 flex-1 overflow-hidden rounded-full bg-brand-soft">
+                  <span className="block h-full rounded-full bg-brand" style={{ width: `${Math.round((r.count / errors.total) * 100)}%` }} />
+                </span>
+                <span className="w-8 text-right font-bold">{r.count}</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      {reasonGaps.length > 0 && (
+        <Card>
+          <h3 className="mb-3 text-lg font-bold">계산은 하지만 이유를 더 생각해 볼 개념</h3>
+          <ul className="flex flex-col gap-3">
+            {reasonGaps.map((g) => (
+              <li key={g.skillId} className="rounded-2xl bg-amber-50 p-3 text-sm">
+                <b>{g.name}</b>
+                {g.misconception && (
+                  <span className="text-muted">
+                    {" "}
+                    — {g.misconception.name}: {g.misconception.explain}
+                  </span>
+                )}
+                <br />
+                <span className="text-muted">집에서 도와주기: {g.tip}</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      {written.length > 0 && (
+        <Card>
+          <h3 className="mb-1 text-lg font-bold">아이가 쓴 설명</h3>
+          <p className="mb-3 text-xs text-muted">AI가 채점하기 어려웠던 설명은 직접 확인해 주세요. 확인 결과는 다음 학습 계획에 반영돼요.</p>
+          <ul className="flex flex-col gap-3" data-testid="written-explanations">
+            {written.map((w) => (
+              <li key={w.id} className={`rounded-2xl p-3 text-sm ${w.needsCheck ? "bg-amber-50 ring-1 ring-amber-200" : "bg-brand-soft/40"}`}>
+                <p className="text-muted">
+                  {w.skillName} · <MathText text={w.prompt} />
+                </p>
+                <p className="mt-1 text-base">&ldquo;{w.text}&rdquo;</p>
+                <p className="mt-1 text-muted">
+                  {w.score === null ? "채점 대기" : ["아직이에요", "거의 맞았어요", "잘 설명했어요"][w.score]} · {w.feedback}
+                </p>
+                {w.verdict ? (
+                  <p className="mt-1 font-semibold">보호자 확인: {w.verdict === "ok" ? "맞게 설명했어요" : "다시 설명이 필요해요"}</p>
+                ) : (
+                  w.needsCheck && (
+                    <form action={reviewExplanation} className="mt-2 flex flex-wrap gap-2">
+                      <input type="hidden" name="explanationId" value={w.id} />
+                      <button name="verdict" value="ok" className="rounded-xl bg-green-100 px-3 py-1.5 font-bold text-green-900">
+                        맞게 설명했어요
+                      </button>
+                      <button name="verdict" value="retry" className="rounded-xl bg-white px-3 py-1.5 font-bold text-muted ring-1 ring-black/10">
+                        다시 설명이 필요해요
+                      </button>
+                    </form>
+                  )
+                )}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
       {summary.nextSkills.length > 0 && (
         <Card>
           <h3 className="mb-2 text-lg font-bold">다음 학습 계획</h3>
@@ -118,7 +195,7 @@ async function Report({ params }: { params: Promise<{ id: string }> }) {
 
       <Card>
         <h3 className="mb-3 text-lg font-bold">자녀 정보 바꾸기</h3>
-        <EditChildForm defaults={{ id: student.id, nickname: student.nickname, grade, semester, theme: student.theme, readAloud: student.readAloud }} />
+        <EditChildForm defaults={{ id: student.id, nickname: student.nickname, grade, semester, theme: student.theme, readAloud: student.readAloud, allowWriting: student.allowWriting }} />
         <p className="mt-3 text-xs text-muted">
           AI 설명·문장제: {aiEnabled() ? "켜짐 (AI 결과는 자동 검증 후 사용)" : "꺼짐 (내장 설명과 문제 사용)"}
         </p>

@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
+    "test:e2e": "next build && playwright test",
     "db:generate": "drizzle-kit generate",
     "docs:concept-map": "tsx scripts/gen-concept-map.ts"
   },

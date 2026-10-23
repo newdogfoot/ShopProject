@@ -42,6 +42,17 @@ export interface SkillState {
   /** Learning cycles that ended without mastery (3 in a row → escalate). */
   stuckCycles: number;
   masteredAt: number | null;
+  /** Answers to "why does this work?" questions (absent until the first one). */
+  reason?: ReasonRecord;
+}
+
+export interface ReasonRecord {
+  asked: number;
+  correct: number;
+  lastCorrect: boolean;
+  lastAt: number;
+  /** Misconception shown by the last wrong reason, if any. */
+  misconceptionId: string | null;
 }
 
 export type LearnerState = Record<string, SkillState>;
@@ -150,6 +161,53 @@ export function isSolid(status: SkillStatus): boolean {
 
 export function getState(learner: LearnerState, skillId: string): SkillState {
   return learner[skillId] ?? emptySkillState(skillId);
+}
+
+/**
+ * Records an answer to a "why" question. Reasons do not change the mastery
+ * probability, except that a misconception shown again at a review becomes
+ * active so the next session explains it.
+ */
+export function recordReason(
+  state: SkillState,
+  r: { correct: boolean; misconceptionId?: string | null; at: number; review: boolean },
+): SkillState {
+  const prev = state.reason;
+  const reason: ReasonRecord = {
+    asked: (prev?.asked ?? 0) + 1,
+    correct: (prev?.correct ?? 0) + (r.correct ? 1 : 0),
+    lastCorrect: r.correct,
+    lastAt: r.at,
+    misconceptionId: r.correct ? null : (r.misconceptionId ?? null),
+  };
+  const next: SkillState = { ...state, reason, lastSeenAt: r.at };
+  if (r.review && !r.correct && r.misconceptionId) {
+    return {
+      ...next,
+      p: Math.min(next.p, BKT.mastery - 0.05),
+      misconceptions: { ...next.misconceptions, [r.misconceptionId]: (next.misconceptions[r.misconceptionId] ?? 0) + 1 },
+    };
+  }
+  return next;
+}
+
+/**
+ * Applies a guardian's check of a written explanation. `counted`: the
+ * explanation was already graded into the record; `wasCorrect`: it counted as right.
+ */
+export function reviseReason(state: SkillState, r: { counted: boolean; wasCorrect: boolean; nowCorrect: boolean; at: number }): SkillState {
+  const prev = state.reason ?? { asked: 0, correct: 0, lastCorrect: false, lastAt: r.at, misconceptionId: null };
+  const correct = prev.correct + (r.nowCorrect ? 1 : 0) - (r.counted && r.wasCorrect ? 1 : 0);
+  return {
+    ...state,
+    reason: {
+      ...prev,
+      asked: prev.asked + (r.counted ? 0 : 1),
+      correct: Math.max(0, Math.min(correct, prev.asked + (r.counted ? 0 : 1))),
+      lastCorrect: r.nowCorrect,
+      misconceptionId: r.nowCorrect ? null : prev.misconceptionId,
+    },
+  };
 }
 
 /** Marks a skill as mastered after a passed check, clearing misconceptions and starting reviews. */

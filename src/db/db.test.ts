@@ -9,17 +9,22 @@ import {
   createStudent,
   deleteAuthSession,
   deleteStudent,
+  errorTypeStats,
   findGuardianByEmail,
   getStudent,
   guardianForToken,
   insertAttempt,
+  insertExplanation,
   listConsents,
+  listExplanations,
   listStudents,
   loadLearner,
   misconceptionExamples,
   REQUIRED_CONSENTS,
   saveLearner,
   saveSessionState,
+  setExplanationVerdict,
+  updateAttemptOutcome,
 } from "./queries";
 import { hashPassword, verifyPassword } from "@/auth/password";
 import { emptySkillState, markMastered } from "@/domain/model/learner";
@@ -109,5 +114,62 @@ describe("students and learning data", () => {
     expect(await deleteStudent(db, g.id, child.id)).toBe(true);
     expect(await loadLearner(db, child.id)).toEqual({});
     expect((await attemptStats(db, child.id, new Date(0))).count).toBe(0);
+  });
+});
+
+describe("error causes and written explanations", () => {
+  const attempt = (studentId: string, correct: boolean) => ({
+    studentId,
+    sessionId: null,
+    skillId: "AS_2D_CARRY_ADD",
+    itemId: "AS_2D_CARRY_ADD#2#1",
+    purpose: "practice",
+    prompt: "47 + 38 = □",
+    answer: { kind: "integer", text: "75" },
+    shown: "75",
+    correct,
+    misconceptionId: null,
+    hintsUsed: 0,
+    ms: 9000,
+  });
+
+  it("records how wrong answers ended and counts their causes", async () => {
+    const g = await createGuardian(db, "causes@example.com", "hash", []);
+    const other = await createGuardian(db, "other-causes@example.com", "hash", []);
+    const child = await createStudent(db, g.id, { nickname: "도토리", grade: 2, semester: 2, theme: "animal", readAloud: true });
+    const stranger = await createStudent(db, other.id, { nickname: "솔방울", grade: 2, semester: 2, theme: "animal", readAloud: true });
+    const id = await insertAttempt(db, attempt(child.id, false));
+    await insertAttempt(db, { ...attempt(child.id, false), errorType: "concept" });
+    await insertAttempt(db, attempt(child.id, true));
+    await updateAttemptOutcome(db, child.id, id, { errorType: "careless", solvedAfterRetry: true });
+    // Another child's id does nothing.
+    await updateAttemptOutcome(db, stranger.id, id, { errorType: "reading", solvedAfterRetry: false });
+    const stats = await errorTypeStats(db, child.id, new Date(Date.now() - 3600_000));
+    expect(stats).toEqual({ concept: 1, procedure: 0, careless: 1, reading: 0, unknown: 0 });
+    expect(child.allowWriting).toBe(true);
+  });
+
+  it("keeps explanations 90 days and lets only the child's guardian check them", async () => {
+    const g = await createGuardian(db, "writer@example.com", "hash", []);
+    const other = await createGuardian(db, "not-writer@example.com", "hash", []);
+    const child = await createStudent(db, g.id, { nickname: "연필", grade: 4, semester: 2, theme: "space", readAloud: false });
+    const row = {
+      studentId: child.id,
+      skillId: "FRAC_DIFF_DEN_ADD",
+      reasonId: "FRAC_DIFF_DEN_ADD.common-denominator",
+      prompt: "왜 통분할까요?",
+      text: "조각 크기가 달라서요",
+      score: null,
+      confidence: "low" as const,
+      feedback: "확인 중",
+    };
+    const old = await insertExplanation(db, row, new Date(Date.now() - 100 * 24 * 3600 * 1000));
+    const id = await insertExplanation(db, row);
+    const list = await listExplanations(db, child.id);
+    expect(list.map((e) => e.id)).toEqual([id]);
+    expect(list.map((e) => e.id)).not.toContain(old);
+    expect(await setExplanationVerdict(db, other.id, id, "ok")).toBeNull();
+    expect((await setExplanationVerdict(db, g.id, id, "ok"))?.skillId).toBe("FRAC_DIFF_DEN_ADD");
+    expect((await listExplanations(db, child.id))[0].guardianVerdict).toBe("ok");
   });
 });

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { bankedWordProblem, getExplanation, getHint, getWordProblem } from "./features";
+import { bankedWordProblem, explainStep, getExplanation, getHint, getWordProblem, gradeExplanation } from "./features";
+import { isEmptyExplanation, scrubPersonalInfo } from "./privacy";
+import { createFakeCaller } from "./fake";
 import { looseAnswerMatches, onlyKnownNumbers, revealsAnswer, sameNumbers, hasBannedContent } from "./validators";
 import type { AiDeps, AiStore, AiUsage, StructuredCaller, StructuredRequest, StructuredResult } from "./types";
 import { generateItem, generateWordItem } from "@/domain/items";
@@ -169,5 +171,93 @@ describe("validators", () => {
     expect(looseAnswerMatches("2.5 L", { kind: "decimal", value: rat(5, 2) })).toBe(true);
     expect(hasBannedContent("바보처럼")).toBe(true);
     expect(hasBannedContent("사탕을 나누어요")).toBe(false);
+  });
+});
+
+describe("written explanations", () => {
+  const input = {
+    prompt: "{1/2}+{1/3}을 계산할 때 먼저 통분하는 까닭은 무엇일까요?",
+    rubric: ["분모가 다르면 조각의 크기가 다름", "통분해서 같은 크기 조각으로 바꿈", "{3/6}+{2/6}={5/6}"],
+    model: "{1/2}과 {1/3}은 조각의 크기가 달라요. 둘 다 분모 6으로 바꾸면 {3/6}과 {2/6}이 되고, 같은 크기 조각끼리 더해 {5/6}이에요.",
+    text: "분모가 다르면 조각 크기가 달라서 6으로 똑같이 맞춰야 더할 수 있어요",
+    grade: 5 as const,
+  };
+
+  it("grades with the AI and keeps only valid rubric numbers", async () => {
+    // Item 3 is within the schema but beyond this question's two-item rubric, so it is dropped.
+    const caller = fakeCaller({ "grade-explanation": { score: 2, met: [1, 2, 3], feedback: "조각의 크기를 맞춘 점이 좋아요. 6은 어떻게 찾았나요?", confidence: "high" } });
+    const r = await gradeExplanation(deps(caller).deps, { ...input, rubric: input.rubric.slice(0, 2) });
+    expect(r).toMatchObject({ score: 2, source: "ai", confidence: "high", met: [0, 1] });
+    expect(caller.calls).toEqual(["grade-explanation"]);
+  });
+
+  it("answers 'I don't know' without calling the AI", async () => {
+    const caller = fakeCaller({});
+    const r = await gradeExplanation(deps(caller).deps, { ...input, text: "몰라요" });
+    expect(r).toMatchObject({ score: 0, source: "rule" });
+    expect(caller.calls).toEqual([]);
+    expect(isEmptyExplanation("음..")).toBe(true);
+    expect(isEmptyExplanation("분모가 달라서")).toBe(false);
+  });
+
+  it("waits for a guardian when AI is off, fails, or writes unsafe feedback", async () => {
+    expect((await gradeExplanation(deps(null).deps, input)).score).toBeNull();
+    expect((await gradeExplanation(deps(fakeCaller({ "grade-explanation": "refusal" })).deps, input)).source).toBe("pending");
+    const link = fakeCaller({ "grade-explanation": { score: 2, met: [1], feedback: "www.example.com 을 보세요", confidence: "high" } });
+    expect((await gradeExplanation(deps(link).deps, input)).source).toBe("pending");
+    const madeUp = fakeCaller({ "grade-explanation": { score: 1, met: [1], feedback: "47을 생각해 볼까요?", confidence: "medium" } });
+    expect((await gradeExplanation(deps(madeUp).deps, input)).source).toBe("pending");
+  });
+
+  it("removes personal details before anything is sent", () => {
+    const r = scrubPersonalInfo("제 번호는 010-1234-5678 이고 kid@example.com 이에요. www.test.kr 분모가 달라요");
+    expect(r.removed).toBe(true);
+    expect(r.text).not.toMatch(/010|1234|example|test\.kr/);
+    expect(r.text).toContain("분모가 달라요");
+    expect(scrubPersonalInfo("0.3은 0.30과 같아서 더 커요").removed).toBe(false);
+    expect(scrubPersonalInfo("가".repeat(300)).text.length).toBe(100);
+  });
+});
+
+describe("why? on a solution step", () => {
+  const item = generateItem("AS_2D_BORROW_SUB", 77, 2);
+
+  it("uses a valid AI answer once and caches it", async () => {
+    const caller = fakeCaller({ why: { text: "일의 자리에서 뺄 수 없어서 십의 자리에서 10을 받아내렸기 때문이에요." } });
+    const { deps: d } = deps(caller);
+    const first = await explainStep(d, { item, stepIndex: 0, grade: 2 });
+    expect(first.source).toBe("ai");
+    const again = await explainStep(d, { item, stepIndex: 0, grade: 2 });
+    expect(again).toEqual(first);
+    expect(caller.calls).toEqual(["why"]);
+  });
+
+  it("falls back to the key idea for made-up numbers, bad steps or no AI", async () => {
+    const madeUp = fakeCaller({ why: { text: "9876을 생각해 봐요." } });
+    expect((await explainStep(deps(madeUp).deps, { item, stepIndex: 0, grade: 2 })).source).toBe("template");
+    expect((await explainStep(deps(fakeCaller({})).deps, { item, stepIndex: 99, grade: 2 })).source).toBe("template");
+    expect((await explainStep(deps(null).deps, { item, stepIndex: 0, grade: 2 })).text).toContain("이 단계는");
+  });
+
+  it("returns the AI's guess of the error type with a hint", async () => {
+    const h = await getHint(deps(fakeCaller({ hint: { hint: "십의 자리를 다시 볼까요?", errorType: "careless" } })).deps, {
+      item,
+      level: 1,
+      studentAnswer: "1",
+      bugFeedback: null,
+      grade: 2,
+    });
+    expect(h.errorType).toBe("careless");
+  });
+});
+
+describe("test-only fake AI", () => {
+  it("passes every check it is used for", async () => {
+    const caller = createFakeCaller();
+    const { deps: d } = deps(caller);
+    expect((await gradeExplanation(d, { prompt: "왜?", rubric: ["핵심"], model: "모범", text: "분모가 다르면 크기가 달라서 맞춰요", grade: 4 })).score).toBe(2);
+    expect((await explainStep(d, { item: generateItem("MUL_FACTS", 5, 2), stepIndex: 0, grade: 2 })).source).toBe("ai");
+    const e = await getExplanation(d, { skillId: "MUL_FACTS", strategy: "concrete", misconceptionId: null, example: generateItem("MUL_FACTS", 5, 2), gradeBand: "1-2" });
+    expect(e.source).toBe("ai");
   });
 });

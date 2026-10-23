@@ -12,6 +12,7 @@ export interface ChildDefaults {
   semester?: number;
   theme?: string;
   readAloud?: boolean;
+  allowWriting?: boolean;
 }
 
 function Fields({ d }: { d: ChildDefaults }) {
@@ -22,6 +23,7 @@ function Fields({ d }: { d: ChildDefaults }) {
   const [theme, setTheme] = useState(d.theme ?? "snack");
   // Read-aloud follows the grade (on for grades 1–2) until the guardian sets it.
   const [readAloud, setReadAloud] = useState<boolean | null>(d.readAloud ?? null);
+  const [allowWriting, setAllowWriting] = useState(d.allowWriting ?? true);
   return (
     <>
       <label className="flex flex-col gap-1.5 text-sm font-semibold">
@@ -67,6 +69,19 @@ function Fields({ d }: { d: ChildDefaults }) {
           className="h-5 w-5 accent-[var(--brand)]"
         />
         문제를 소리 내어 읽어 주기 (1~2학년 추천)
+      </label>
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          name="allowWriting"
+          checked={allowWriting}
+          onChange={(e) => setAllowWriting(e.target.checked)}
+          className="mt-0.5 h-5 w-5 accent-[var(--brand)]"
+        />
+        <span>
+          3학년 이상: &lsquo;왜 그럴까?&rsquo; 질문에 직접 글로 답하기
+          <span className="block text-xs text-muted">AI가 채점해요. 전화번호 같은 개인정보는 지운 뒤 보내고, 글은 90일 뒤 지워요. 끄면 보기에서 고르기로 바뀌어요.</span>
+        </span>
       </label>
     </>
   );

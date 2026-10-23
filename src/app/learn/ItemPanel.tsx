@@ -1,11 +1,13 @@
 "use client";
 
 import { Keypad } from "@/components/Keypad";
+import { TextAnswer } from "@/components/TextAnswer";
 import { MathText } from "@/components/MathText";
 import { SpeakButton } from "@/components/SpeakButton";
 import { VisualView } from "@/components/Visual";
 import type { StudentAnswer } from "@/domain/items/types";
 import type { FeedbackView, ItemView } from "./views";
+import { WhyButton } from "./WhyButton";
 
 /** One problem: prompt, optional picture, read-aloud and the answer keypad. */
 export function ItemPanel({
@@ -44,7 +46,12 @@ export function ItemPanel({
         )}
       </div>
       {item.visual && <VisualView visual={item.visual} />}
-      {!hideKeypad && <Keypad key={item.id} kind={item.answerKind} form={item.fractionForm} disabled={disabled} onSubmit={onSubmit} />}
+      {!hideKeypad &&
+        (item.answerKind === "text" ? (
+          <TextAnswer key={item.id} maxLength={item.maxLength ?? 100} disabled={disabled} onSubmit={onSubmit} />
+        ) : (
+          <Keypad key={item.id} kind={item.answerKind} form={item.fractionForm} options={item.options} disabled={disabled} onSubmit={onSubmit} />
+        ))}
       {item.test && !hideKeypad && (
         // Test-only shortcuts (rendered only when E2E_TEST_MODE=1 on the server).
         <div className="flex justify-center gap-2 text-xs text-muted">
@@ -71,17 +78,21 @@ const TONE: Record<FeedbackView["status"], string> = {
   form: "bg-amber-50 text-amber-950 ring-amber-200",
   invalid: "bg-amber-50 text-amber-950 ring-amber-200",
   saved: "bg-brand-soft text-brand ring-brand/20",
+  partial: "bg-lime-50 text-lime-950 ring-lime-200",
+  pending: "bg-brand-soft text-brand ring-brand/20",
 };
 
-const ICON: Record<FeedbackView["status"], string> = { correct: "🎉", wrong: "🤔", form: "✏️", invalid: "✏️", saved: "✅" };
+const ICON: Record<FeedbackView["status"], string> = { correct: "🎉", wrong: "🤔", form: "✏️", invalid: "✏️", saved: "✅", partial: "👍", pending: "📮" };
 
-export function FeedbackBox({ feedback }: { feedback: FeedbackView }) {
+/** Feedback after an answer. With `whyItemId`, each solution step gets a "왜요?" button. */
+export function FeedbackBox({ feedback, whyItemId }: { feedback: FeedbackView; whyItemId?: string }) {
   return (
     <div role="status" aria-live="polite" data-testid="feedback" data-status={feedback.status} className={`animate-pop-in rounded-2xl p-4 ring-1 ${TONE[feedback.status]}`}>
       <p className="text-lg font-bold">
         <span aria-hidden>{ICON[feedback.status]} </span>
         <MathText text={feedback.message} />
       </p>
+      {feedback.mine && <p className="mt-2 rounded-xl bg-white/70 px-3 py-2 text-base">내 설명: &ldquo;{feedback.mine}&rdquo;</p>}
       {feedback.detail && (
         <p className="mt-2 text-base">
           <MathText text={feedback.detail} />
@@ -97,9 +108,16 @@ export function FeedbackBox({ feedback }: { feedback: FeedbackView }) {
           {feedback.solution.map((step, i) => (
             <li key={i}>
               <MathText text={step} />
+              {whyItemId && <WhyButton key={`${whyItemId}-${i}`} itemId={whyItemId} stepIndex={i} />}
             </li>
           ))}
         </ol>
+      )}
+      {feedback.model && (
+        <div className="mt-3 rounded-xl bg-white/80 p-3 text-base" data-testid="model-answer">
+          <p className="mb-1 text-sm font-bold">이렇게 설명할 수도 있어요</p>
+          <MathText text={feedback.model} />
+        </div>
       )}
     </div>
   );

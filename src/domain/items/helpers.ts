@@ -151,6 +151,7 @@ export function sameValue(a: AnswerSpec, b: AnswerSpec): boolean {
     const sb = [...new Set(b.values)].sort((x, y) => x - y);
     return sa.length === sb.length && sa.every((v, i) => v === sb[i]);
   }
+  if (a.kind === "choice" && b.kind === "choice") return a.options[a.value] === b.options[b.value];
   return false;
 }
 
@@ -181,6 +182,10 @@ export function answerText(a: AnswerSpec): string {
       return a.value;
     case "integer-list":
       return [...a.values].sort((x, y) => x - y).join(", ");
+    case "choice":
+      return a.options[a.value];
+    case "text":
+      return a.model;
   }
 }
 

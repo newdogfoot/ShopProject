@@ -8,14 +8,19 @@ import {
   createSession,
   getStudent,
   insertAttempt,
+  insertExplanation,
   loadLearner,
   markDiagnosed,
   saveLearner,
   saveSessionState,
+  updateAttemptOutcome,
+  type ErrorType,
 } from "@/db/queries";
 import { getCurrentStudent, requireGuardian, selectStudent } from "@/auth/session";
-import { getAiDeps } from "@/ai";
-import { bankedWordProblem, getExplanation, getHint } from "@/ai/features";
+import { aiEnabled, getAiDeps } from "@/ai";
+import { bankedWordProblem, explainStep, getExplanation, getHint, gradeExplanation } from "@/ai/features";
+import { scrubPersonalInfo } from "@/ai/privacy";
+import { itemFromId } from "@/domain/items";
 import { templateHint } from "@/domain/content/explanations";
 import { getSkill } from "@/domain/curriculum/skills";
 import { gradeBandOf, type Grade, type Semester } from "@/domain/curriculum/types";
@@ -36,9 +41,21 @@ import {
   revealSolution,
   startSession,
   submitAnswer,
+  submitReasonResult,
+  type ActiveItem,
   type SessionState,
 } from "@/domain/tutor/session";
-import { correctFeedback, solutionFeedback, STEP_LABEL, toItemView, type DiagnosisView, type FeedbackView, type SessionView } from "./views";
+import {
+  correctFeedback,
+  reasonFeedback,
+  solutionFeedback,
+  STEP_LABEL,
+  toItemView,
+  writtenFeedback,
+  type DiagnosisView,
+  type FeedbackView,
+  type SessionView,
+} from "./views";
 import { warmExplanations, warmWordProblem } from "./warm";
 
 type StudentRow = NonNullable<Awaited<ReturnType<typeof getCurrentStudent>>>;
@@ -52,6 +69,9 @@ const AnswerSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("quotient-remainder"), quotient: field, remainder: field }),
   z.object({ kind: z.literal("compare"), value: field }),
   z.object({ kind: z.literal("integer-list"), text: z.string().max(200) }),
+  z.object({ kind: z.literal("choice"), index: z.string().max(3) }),
+  // Cut to 100 characters after cleaning; the raw limit only stops abuse.
+  z.object({ kind: z.literal("text"), text: z.string().max(400) }),
 ]);
 
 function parseAnswer(input: unknown): StudentAnswer | null {
@@ -210,6 +230,8 @@ async function loadSession(student: StudentRow): Promise<SessionCtx> {
       theme: themeOf(student),
       seed: randomSeed(),
       now: Date.now(),
+      // Grade 3+ write their "why" answers when the guardian allows it and AI can grade them.
+      reasonMode: student.grade >= 3 && student.allowWriting && aiEnabled() ? "write" : "choice",
     });
     row = await createSession(db, student.id, "learning", state);
     warmExplanations(student.id, student.grade as Grade, state.plan, learner, state.seed);
@@ -256,8 +278,8 @@ async function render(ctx: SessionCtx, state0: SessionState, learner0: LearnerSt
       type: "worked",
       skillName: getSkill(screen.skillId).name,
       stepLabel: STEP_LABEL[screen.stepKind],
-      example: { prompt: screen.example.prompt, steps: screen.example.steps, visual: screen.example.visual },
-      faded: { prompt: f.prompt, steps: f.steps.slice(0, -1), answer: f.steps[f.steps.length - 1] },
+      example: { id: screen.example.id, prompt: screen.example.prompt, steps: screen.example.steps, visual: screen.example.visual },
+      faded: { id: f.id, prompt: f.prompt, steps: f.steps.slice(0, -1), answer: f.steps[f.steps.length - 1] },
     };
   } else {
     let active = screen.active;
@@ -269,14 +291,17 @@ async function render(ctx: SessionCtx, state0: SessionState, learner0: LearnerSt
     }
     if (active.hintsShown > 0 && !active.hints?.[active.hintsShown]) {
       const bug = active.item.bugs.find((b) => b.misconceptionId === active.lastBugId);
-      const text =
-        active.hintsShown === 1
-          ? (await getHint(await getAiDeps(student.id), { item: active.item, level: 1, studentAnswer: active.lastShown, bugFeedback: bug?.feedback ?? null, grade })).text
-          : templateHint(active.item, active.hintsShown);
-      active = { ...active, hints: { ...active.hints, [active.hintsShown]: text } };
+      let text = templateHint(active.item, active.hintsShown);
+      let aiErrorType = active.aiErrorType;
+      if (active.hintsShown === 1) {
+        const hint = await getHint(await getAiDeps(student.id), { item: active.item, level: 1, studentAnswer: active.lastShown, bugFeedback: bug?.feedback ?? null, grade });
+        text = hint.text;
+        aiErrorType = hint.errorType ?? aiErrorType;
+      }
+      active = { ...active, hints: { ...active.hints, [active.hintsShown]: text }, aiErrorType };
     }
     state = { ...state, active };
-    const fb = feedback ?? (active.done ? (active.solutionShown ? solutionFeedback(active.item) : correctFeedback(active.item)) : undefined);
+    const fb = feedback ?? (active.done ? doneFeedback(active) : undefined);
     view = {
       type: "item",
       skillName: getSkill(active.item.skillId).name,
@@ -288,12 +313,38 @@ async function render(ctx: SessionCtx, state0: SessionState, learner0: LearnerSt
       feedback: fb,
       canHint: active.hintsAllowed && !active.done && active.hintsShown < 3,
       canReveal: active.hintsAllowed && !active.done && active.hintsShown >= 2,
+      canAskWhy: active.item.format !== "reason",
     };
   }
 
   await saveLearner(db, student.id, ctx.learner, learner);
   await saveSessionState(db, ctx.sessionId, state, state.finished);
   return view;
+}
+
+/** Feedback for an item that is already finished (shown again after a refresh). */
+function doneFeedback(active: ActiveItem): FeedbackView {
+  if (active.purpose === "reason") {
+    if (active.written) return writtenFeedback(active.item, active.written);
+    const bug = active.item.bugs.find((b) => b.misconceptionId === active.lastBugId);
+    return reasonFeedback(active.item, active.firstCorrect === true, bug?.feedback);
+  }
+  return active.solutionShown ? solutionFeedback(active.item) : correctFeedback(active.item);
+}
+
+const ERROR_TYPES = new Set<string>(["concept", "procedure", "careless", "reading", "unknown"]);
+
+/** Likely cause of a wrong first answer, decided when the item ends. */
+function finalErrorType(active: ActiveItem, solved: boolean): ErrorType {
+  if (active.firstErrorType) return active.firstErrorType as ErrorType;
+  // Fixed right away on the second try: most likely a slip.
+  if (solved && active.attempts === 1) return "careless";
+  return active.aiErrorType && ERROR_TYPES.has(active.aiErrorType) ? (active.aiErrorType as ErrorType) : "unknown";
+}
+
+async function recordOutcome(ctx: SessionCtx, active: ActiveItem, solved: boolean): Promise<void> {
+  if (!active.attemptId || active.firstCorrect !== false) return;
+  await updateAttemptOutcome(ctx.db, ctx.student.id, active.attemptId, { errorType: finalErrorType(active, solved), solvedAfterRetry: solved });
 }
 
 export async function sessionView(): Promise<SessionView> {
@@ -317,10 +368,17 @@ export async function sessionAnswer(itemId: string, answer: StudentAnswer): Prom
   const input = parseAnswer(answer);
   if (!input) return render(ctx, ctx.state, ctx.learner, INVALID);
   const now = Date.now();
+  if (active.purpose === "reason" && active.item.answer.kind === "text") return answerWritten(ctx, active, input, now);
+  if (input.kind === "text") return render(ctx, ctx.state, ctx.learner, INVALID);
   const out = submitAnswer(ctx.state, ctx.learner, input, now);
-  if (active.attempts === 0 && out.feedback.status !== "invalid" && out.feedback.status !== "form") {
+  let state = out.state;
+  const fb = out.feedback;
+  if (active.attempts === 0 && fb.status !== "invalid" && fb.status !== "form") {
     const graded = gradeAnswer(active.item, input);
-    await insertAttempt(ctx.db, {
+    const correct = fb.status === "correct";
+    // The cause of a wrong answer is known now if it matched a misconception or the item is over.
+    const errorType: ErrorType | null = correct ? null : fb.bug ? "concept" : fb.done ? "unknown" : null;
+    const attemptId = await insertAttempt(ctx.db, {
       studentId: ctx.student.id,
       sessionId: ctx.sessionId,
       skillId: active.item.skillId,
@@ -329,21 +387,67 @@ export async function sessionAnswer(itemId: string, answer: StudentAnswer): Prom
       prompt: active.item.prompt,
       answer: input,
       shown: graded.shown,
-      correct: out.feedback.status === "correct",
-      misconceptionId: out.feedback.bug?.misconceptionId ?? null,
+      correct,
+      misconceptionId: fb.bug?.misconceptionId ?? null,
       hintsUsed: active.hintsShown,
       ms: Math.min(now - active.startedAt, 30 * 60_000),
+      errorType,
     });
+    if (!correct && !fb.done && state.active) state = { ...state, active: { ...state.active, attemptId, firstErrorType: errorType } };
+  } else if (fb.done && fb.status !== "invalid" && fb.status !== "form") {
+    await recordOutcome(ctx, active, fb.status === "correct");
   }
-  const fb = out.feedback;
   let feedback: FeedbackView;
   if (fb.status === "invalid") feedback = INVALID;
   else if (fb.status === "form") feedback = { status: "form", done: false, message: fb.formMessage ?? "답의 모양을 다시 확인해 볼까요?" };
+  else if (active.purpose === "reason") feedback = reasonFeedback(active.item, fb.status === "correct", fb.bug?.feedback);
   else if (fb.status === "correct") feedback = correctFeedback(active.item);
   else if (fb.done) feedback = solutionFeedback(active.item, fb.bug?.feedback);
   else feedback = { status: "wrong", done: false, message: "아쉬워요. 힌트를 보고 다시 해 볼까요?" };
   // Learner changes from this answer are saved by render (it diffs against the loaded learner).
-  return render({ ...ctx }, out.state, out.learner, feedback);
+  return render(ctx, state, out.learner, feedback);
+}
+
+/** A written "why": clean it, grade it against the rubric, keep it for the guardian. */
+async function answerWritten(ctx: SessionCtx, active: ActiveItem, input: StudentAnswer, now: number): Promise<SessionView> {
+  if (input.kind !== "text" || active.item.answer.kind !== "text") return render(ctx, ctx.state, ctx.learner, INVALID);
+  const spec = active.item.answer;
+  const { text } = scrubPersonalInfo(input.text);
+  if (!text) return render(ctx, ctx.state, ctx.learner, INVALID);
+  const result = await gradeExplanation(await getAiDeps(ctx.student.id), {
+    prompt: active.item.prompt,
+    rubric: spec.rubric,
+    model: spec.model,
+    text,
+    grade: ctx.student.grade as Grade,
+  });
+  const written = { text, score: result.score, feedback: result.feedback };
+  const out = submitReasonResult(ctx.state, ctx.learner, written, now);
+  await insertExplanation(ctx.db, {
+    studentId: ctx.student.id,
+    skillId: active.item.skillId,
+    reasonId: active.item.reasonId ?? "",
+    prompt: active.item.prompt,
+    text,
+    score: result.score,
+    confidence: result.confidence,
+    feedback: result.feedback,
+  });
+  await insertAttempt(ctx.db, {
+    studentId: ctx.student.id,
+    sessionId: ctx.sessionId,
+    skillId: active.item.skillId,
+    itemId: active.item.id,
+    purpose: "reason",
+    prompt: active.item.prompt,
+    answer: { kind: "text", text },
+    shown: text,
+    correct: result.score === 2,
+    misconceptionId: null,
+    hintsUsed: 0,
+    ms: Math.min(now - active.startedAt, 30 * 60_000),
+  });
+  return render(ctx, out.state, out.learner, writtenFeedback(active.item, written));
 }
 
 export async function sessionHint(itemId: string): Promise<SessionView> {
@@ -354,8 +458,20 @@ export async function sessionHint(itemId: string): Promise<SessionView> {
 
 export async function sessionReveal(itemId: string): Promise<SessionView> {
   const ctx = await loadSession(await currentStudent());
-  if (ctx.state.active?.item.id !== itemId) return render(ctx, ctx.state, ctx.learner);
+  const active = ctx.state.active;
+  if (!active || active.done || active.item.id !== itemId) return render(ctx, ctx.state, ctx.learner);
+  await recordOutcome(ctx, active, false);
   return render(ctx, revealSolution(ctx.state, ctx.learner), ctx.learner);
+}
+
+/** "왜요?" on a solution step. Only the fixed question is asked; the item is rebuilt from its id. */
+export async function sessionWhy(itemId: string, stepIndex: number): Promise<{ text: string }> {
+  const student = await currentStudent();
+  if (typeof itemId !== "string" || itemId.length > 120 || !Number.isInteger(stepIndex) || stepIndex < 0 || stepIndex > 30) return { text: "" };
+  const item = itemFromId(itemId);
+  if (!item || stepIndex >= item.steps.length) return { text: "" };
+  const result = await explainStep(await getAiDeps(student.id), { item, stepIndex, grade: student.grade as Grade });
+  return { text: result.text };
 }
 
 export async function sessionNext(itemId: string): Promise<SessionView> {

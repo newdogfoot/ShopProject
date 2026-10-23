@@ -7,6 +7,8 @@ import { SKILL_IDS, getSkill } from "../curriculum/skills";
 import { gradeBandOf, type Grade, type Semester } from "../curriculum/types";
 import { deriveSeed } from "../math/rng";
 import { generateItem, generateWordItem } from "../items";
+import { generateReasonItem, type ReasonMode } from "../items/reason";
+import { hasReasons } from "../content/reasons";
 import { correctAnswerText, grade, type GradeStatus } from "../items/answer";
 import type { Item, StudentAnswer } from "../items/types";
 import type { Theme } from "../content/stories";
@@ -18,6 +20,7 @@ import {
   getState,
   inferMastery,
   markMastered,
+  recordReason,
   type LearnerState,
 } from "../model/learner";
 import { completeExplain, completeWorked, currentStep, recordCycleAnswer, startCycle, type CycleOutcome, type CycleState, type ItemPurpose, type Strategy } from "./cycle";
@@ -43,6 +46,14 @@ export interface ActiveItem {
   decorated?: boolean;
   /** Hint text per level, filled in by the app (template or AI) so refreshes show the same text. */
   hints?: Record<number, string>;
+  /** Id of the stored first attempt, so its outcome can be filled in when the item ends. */
+  attemptId?: string;
+  /** Cause already known from the first wrong answer ("concept" when it matched a misconception). */
+  firstErrorType?: string | null;
+  /** Error type guessed by the AI hint for a wrong answer (concept, procedure, careless, …). */
+  aiErrorType?: string;
+  /** Result of a written explanation, kept so a refresh shows the same feedback. */
+  written?: { text: string; score: 0 | 1 | 2 | null; feedback: string };
 }
 
 export interface SessionStats {
@@ -72,6 +83,8 @@ export interface SessionState {
   budgetMs: number;
   stats: SessionStats;
   finished: boolean;
+  /** How "why" questions are answered: pick a reason, or write it (grade 3+, AI on). */
+  reasonMode?: ReasonMode;
 }
 
 export type SessionScreen =
@@ -100,7 +113,16 @@ export function wordSeed(skillId: string, difficulty: number, theme: Theme, pick
 }
 const MAX_TRIES_WITH_HINTS = 3;
 
-export function startSession(opts: { learner: LearnerState; grade: Grade; semester: Semester; theme: Theme; seed: number; now: number; budgetMs?: number }): SessionState {
+export function startSession(opts: {
+  learner: LearnerState;
+  grade: Grade;
+  semester: Semester;
+  theme: Theme;
+  seed: number;
+  now: number;
+  budgetMs?: number;
+  reasonMode?: ReasonMode;
+}): SessionState {
   return {
     version: 1,
     seed: opts.seed,
@@ -116,6 +138,7 @@ export function startSession(opts: { learner: LearnerState; grade: Grade; semest
     budgetMs: opts.budgetMs ?? SESSION_MINUTES[gradeBandOf(opts.grade)] * 60_000,
     stats: { answered: 0, firstTryCorrect: 0, hintsUsed: 0, mastered: [], skipped: [], stuck: [], reviewed: [], unlocked: [], tookBreak: false },
     finished: false,
+    reasonMode: opts.reasonMode ?? "choice",
   };
 }
 
@@ -215,12 +238,16 @@ export function advance(input: SessionState, learnerIn: LearnerState, now: numbe
       }
       const skill = getSkill(planStep.skillId);
       const ss = getState(learner, planStep.skillId);
+      const withReason = hasReasons(planStep.skillId);
       state = {
         ...state,
         cycle: startCycle(planStep.skillId, cycleModeFor(planStep.kind), {
           confirmed: ss.evidence === "direct" && deriveStatus(ss) !== "shaky",
           misconceptionId: activeMisconception(learner, planStep.skillId),
           canWord: skill.wordProblems,
+          hasReason: withReason,
+          // Every other review (and after a wrong reason) asks "why" instead of a computation.
+          reasonReview: withReason && (ss.reason?.lastCorrect === false || ss.reviewStage % 2 === 1),
         }),
       };
     }
@@ -246,9 +273,12 @@ export function advance(input: SessionState, learnerIn: LearnerState, now: numbe
       case "item": {
         // Word problems come from a fixed pool of variants per (skill, difficulty, theme)
         // so AI-written stories can be cached once and reused by every child.
-        const item = step.word
-          ? generateWordItem(cycle.skillId, wordSeed(cycle.skillId, step.difficulty, state.theme, deriveSeed(state.seed, "variant", state.counter)), step.difficulty, state.theme)
-          : generateItem(cycle.skillId, deriveSeed(state.seed, "item", state.counter), step.difficulty);
+        const item =
+          step.purpose === "reason"
+            ? generateReasonItem(cycle.skillId, deriveSeed(state.seed, "reason", state.counter), state.reasonMode ?? "choice")
+            : step.word
+              ? generateWordItem(cycle.skillId, wordSeed(cycle.skillId, step.difficulty, state.theme, deriveSeed(state.seed, "variant", state.counter)), step.difficulty, state.theme)
+              : generateItem(cycle.skillId, deriveSeed(state.seed, "item", state.counter), step.difficulty);
         const active: ActiveItem = {
           item,
           purpose: step.purpose,
@@ -302,8 +332,16 @@ export function submitAnswer(
 ): { state: SessionState; learner: LearnerState; feedback: Feedback } {
   const active = input.active;
   if (!active || active.done) throw new Error("no active item");
+  if (active.purpose === "reason" && active.item.answer.kind === "text") throw new Error("written reasons are graded with submitReasonResult");
   const result = grade(active.item, answer);
   if (result.status === "invalid") return { state: input, learner: learnerIn, feedback: { status: "invalid", done: false, hintLevel: active.hintsShown } };
+  if (active.purpose === "reason") {
+    // One try, no hints; recorded as understanding, not as mastery evidence.
+    const correct = result.status === "correct";
+    const out = finishReason(input, learnerIn, { ...active, lastShown: result.shown }, { correct, flowOk: correct, record: true, misconceptionId: result.bug?.misconceptionId ?? null }, now);
+    const bug = result.bug ? { misconceptionId: result.bug.misconceptionId, feedback: result.bug.feedback } : undefined;
+    return { ...out, feedback: { status: correct ? "correct" : "wrong", done: true, bug, correctAnswer: correct ? undefined : correctAnswerText(active.item), hintLevel: 0 } };
+  }
   if (result.status === "form" && !active.formRetry) {
     return {
       state: { ...input, active: { ...active, formRetry: true } },
@@ -354,6 +392,49 @@ export function submitAnswer(
     learner,
     feedback: { status: "wrong", done: true, bug, correctAnswer: correctAnswerText(active.item), hintLevel: updated.hintsShown },
   };
+}
+
+/**
+ * Ends a "why" item. `record` false (an explanation that could not be graded)
+ * leaves the learner model alone; `flowOk` decides how a review continues.
+ */
+function finishReason(
+  state: SessionState,
+  learner: LearnerState,
+  active: ActiveItem,
+  r: { correct: boolean; flowOk: boolean; record: boolean; misconceptionId: string | null },
+  now: number,
+): { state: SessionState; learner: LearnerState } {
+  const skillId = active.item.skillId;
+  const review = state.cycle?.mode === "review";
+  const next: LearnerState = r.record
+    ? { ...learner, [skillId]: recordReason(getState(learner, skillId), { correct: r.correct, misconceptionId: r.misconceptionId, at: now, review }) }
+    : learner;
+  const updated: ActiveItem = { ...active, attempts: 1, firstCorrect: r.flowOk, lastBugId: r.correct ? null : r.misconceptionId };
+  return { state: finishItem(state, next, updated), learner: next };
+}
+
+/**
+ * Finishes a written "why" answer after the app has graded it against the rubric.
+ * `score` is 0–2 (null when it could not be graded yet); 2 counts as correct.
+ */
+export function submitReasonResult(
+  input: SessionState,
+  learnerIn: LearnerState,
+  written: { text: string; score: 0 | 1 | 2 | null; feedback: string },
+  now: number,
+): { state: SessionState; learner: LearnerState } {
+  const active = input.active;
+  if (!active || active.done || active.purpose !== "reason" || active.item.answer.kind !== "text") throw new Error("no written reason to grade");
+  // A partly right explanation keeps a review going; an ungraded one is not counted at all.
+  const graded = written.score !== null;
+  return finishReason(
+    input,
+    learnerIn,
+    { ...active, written, lastShown: written.text },
+    { correct: written.score === 2, flowOk: !graded || written.score! >= 1, record: graded, misconceptionId: null },
+    now,
+  );
 }
 
 /** Shows the next hint level (practice items only). */

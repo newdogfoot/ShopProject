@@ -11,9 +11,9 @@ import type { Difficulty } from "../items/types";
 
 export type Strategy = "misconception" | "concrete" | "analogy" | "procedure";
 export type CycleMode = "learn" | "reinforce" | "review" | "challenge";
-export type CyclePhase = "precheck" | "explain" | "worked" | "practice" | "check" | "single" | "done";
+export type CyclePhase = "precheck" | "explain" | "worked" | "practice" | "check" | "reason" | "single" | "done";
 export type CycleOutcome = "mastered" | "skipped" | "stuck" | "review-ok" | "review-fail" | "challenge-done" | "break";
-export type ItemPurpose = "precheck" | "practice" | "check" | "review" | "challenge";
+export type ItemPurpose = "precheck" | "practice" | "check" | "review" | "challenge" | "reason";
 
 export interface CycleState {
   skillId: string;
@@ -29,6 +29,10 @@ export interface CycleState {
   /** Show encouragement and an easier item next. */
   encourage: boolean;
   outcome: CycleOutcome | null;
+  /** Ask a "why" question after the mastery check passes (learn mode). */
+  hasReason?: boolean;
+  /** This review asks a "why" question instead of a computation. */
+  reasonReview?: boolean;
 }
 
 export type CycleStep =
@@ -47,6 +51,10 @@ export interface StartOptions {
   confirmed: boolean;
   misconceptionId: string | null;
   canWord: boolean;
+  /** The skill has "why" questions. */
+  hasReason?: boolean;
+  /** Use a "why" question for this review. */
+  reasonReview?: boolean;
 }
 
 function freshPractice(difficulty: Difficulty = 1): CycleState["practice"] {
@@ -68,6 +76,8 @@ export function startCycle(skillId: string, mode: CycleMode, opts: StartOptions)
     check: { asked: 0, correct: 0 },
     encourage: false,
     outcome: null,
+    hasReason: opts.hasReason ?? false,
+    reasonReview: mode === "review" && (opts.reasonReview ?? false),
   };
   switch (mode) {
     case "learn":
@@ -103,10 +113,13 @@ export function currentStep(c: CycleState): CycleStep {
       const last = n === CHECK_ITEMS - 1;
       return { kind: "item", purpose: "check", difficulty: n === 0 ? 2 : last && c.canWord ? 2 : 3, word: last && c.canWord, hintsAllowed: false, encourage: false };
     }
+    case "reason":
+      return { kind: "item", purpose: "reason", difficulty: 2, word: false, hintsAllowed: false, encourage: false };
     case "single":
-      return c.mode === "review"
-        ? { kind: "item", purpose: "review", difficulty: 2, word: false, hintsAllowed: false, encourage: false }
-        : { kind: "item", purpose: "challenge", difficulty: c.canWord ? 2 : 3, word: c.canWord, hintsAllowed: true, encourage: false };
+      if (c.mode === "review") {
+        return { kind: "item", purpose: c.reasonReview ? "reason" : "review", difficulty: 2, word: false, hintsAllowed: false, encourage: false };
+      }
+      return { kind: "item", purpose: "challenge", difficulty: c.canWord ? 2 : 3, word: c.canWord, hintsAllowed: true, encourage: false };
     case "done":
       return { kind: "done", outcome: c.outcome ?? "stuck" };
   }
@@ -174,8 +187,13 @@ export function recordCycleAnswer(c: CycleState, a: CycleAnswer): CycleState {
       if (check.asked >= 2 && check.correct === 0) return failCycle({ ...c, check });
       if (check.asked < CHECK_ITEMS) return { ...c, check };
       const passed = check.correct === CHECK_ITEMS || (check.correct === CHECK_ITEMS - 1 && a.p >= 0.9);
-      return passed ? { ...c, check, phase: "done", outcome: "mastered" } : failCycle({ ...c, check });
+      if (!passed) return failCycle({ ...c, check });
+      // Can compute it: now say why it works (recorded separately, mastery stays).
+      if (c.hasReason && c.mode === "learn") return { ...c, check, phase: "reason" };
+      return { ...c, check, phase: "done", outcome: "mastered" };
     }
+    case "reason":
+      return { ...c, phase: "done", outcome: "mastered" };
     case "single":
       if (c.mode === "review") return { ...c, phase: "done", outcome: a.clean ? "review-ok" : "review-fail" };
       return { ...c, phase: "done", outcome: "challenge-done" };

@@ -55,6 +55,8 @@ export const students = pgTable(
     semester: integer("semester").notNull(),
     theme: text("theme").notNull().default("snack"),
     readAloud: boolean("read_aloud").notNull().default(false),
+    /** Grade 3+: write "why" answers (graded by AI) instead of picking one. Guardians can turn it off. */
+    allowWriting: boolean("allow_writing").notNull().default(true),
     diagnosedAt: timestamp("diagnosed_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
@@ -111,9 +113,39 @@ export const attempts = pgTable(
     misconceptionId: text("misconception_id"),
     hintsUsed: integer("hints_used").notNull().default(0),
     ms: integer("ms").notNull(),
+    /** Likely cause of a wrong first answer: concept, procedure, careless, reading or unknown. */
+    errorType: text("error_type"),
+    /** Whether a wrong first answer was fixed on a later try. */
+    solvedAfterRetry: boolean("solved_after_retry"),
     createdAt: createdAt(),
   },
   (t) => [index("attempts_student_idx").on(t.studentId, t.createdAt)],
+);
+
+/**
+ * Written "why" explanations (grade 3+). Text is cleaned of personal details
+ * before it is stored, and rows older than 90 days are deleted.
+ */
+export const explanations = pgTable(
+  "explanations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    studentId: uuid("student_id")
+      .notNull()
+      .references(() => students.id, { onDelete: "cascade" }),
+    skillId: text("skill_id").notNull(),
+    reasonId: text("reason_id").notNull(),
+    prompt: text("prompt").notNull(),
+    text: text("text").notNull(),
+    /** 0–2; null when it could not be graded. */
+    score: integer("score"),
+    confidence: text("confidence").$type<"low" | "medium" | "high">(),
+    feedback: text("feedback").notNull(),
+    /** Set by the guardian after checking: "ok" or "retry". */
+    guardianVerdict: text("guardian_verdict").$type<"ok" | "retry">(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("explanations_student_idx").on(t.studentId, t.createdAt)],
 );
 
 /** Word problems written by AI that passed validation, reused across students. */

@@ -1,6 +1,6 @@
 import type { z } from "zod";
 
-export type AiFeature = "explain" | "hint" | "word-problem" | "solve";
+export type AiFeature = "explain" | "hint" | "word-problem" | "solve" | "grade-explanation" | "why" | "weekly";
 
 export interface AiUsage {
   feature: AiFeature;
